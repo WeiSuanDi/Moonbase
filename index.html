@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>月球基地 2049 | Lunar Base Weisuandi</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --primary: #00d4ff;
+            --secondary: #7b2cbf;
+            --dark: #050508;
+            --glass: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 255, 255, 0.1);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--dark);
+            color: #e0e0e0;
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* 星空背景 */
+        #starfield {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: -1;
+            background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+        }
+
+        .star {
+            position: absolute;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle var(--duration) ease-in-out infinite;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.2; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.2); }
+        }
+
+        /* 导航 */
+        nav {
+            position: fixed;
+            top: 0; width: 100%;
+            padding: 20px 50px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
+            background: linear-gradient(to bottom, rgba(5,5,8,0.8), transparent);
+            backdrop-filter: blur(10px);
+        }
+
+        .logo {
+            font-size: 1.2rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: var(--primary);
+            text-transform: uppercase;
+        }
+
+        .nav-links a {
+            color: #aaa;
+            text-decoration: none;
+            margin-left: 30px;
+            font-size: 0.9rem;
+            transition: color 0.3s;
+            position: relative;
+        }
+
+        .nav-links a:hover { color: var(--primary); }
+        .nav-links a::after {
+            content: '';
+            position: absolute;
+            bottom: -5px; left: 0;
+            width: 0; height: 2px;
+            background: var(--primary);
+            transition: width 0.3s;
+        }
+        .nav-links a:hover::after { width: 100%; }
+
+        /* 首屏 */
+        .hero {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            position: relative;
+        }
+
+        .hero h1 {
+            font-size: clamp(2.5rem, 8vw, 6rem);
+            font-weight: 900;
+            letter-spacing: -2px;
+            background: linear-gradient(135deg, #fff 0%, var(--primary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 20px;
+            opacity: 0;
+            transform: translateY(30px);
+            animation: fadeUp 1s ease forwards 0.5s;
+        }
+
+        .hero p {
+            font-size: 1.2rem;
+            color: #888;
+            max-width: 600px;
+            opacity: 0;
+            transform: translateY(30px);
+            animation: fadeUp 1s ease forwards 0.8s;
+        }
+
+        .hero .badge {
+            margin-top: 30px;
+            padding: 10px 30px;
+            border: 1px solid var(--border);
+            border-radius: 50px;
+            font-size: 0.85rem;
+            color: var(--primary);
+            background: var(--glass);
+            backdrop-filter: blur(10px);
+            opacity: 0;
+            animation: fadeUp 1s ease forwards 1.1s;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .hero .badge:hover {
+            border-color: var(--primary);
+            box-shadow: 0 0 30px rgba(0, 212, 255, 0.2);
+        }
+
+        @keyframes fadeUp {
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* 月球装饰 */
+        .moon {
+            position: absolute;
+            width: 200px; height: 200px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #e0e0e0, #888);
+            box-shadow: 0 0 60px rgba(255,255,255,0.1), inset -20px -20px 50px rgba(0,0,0,0.3);
+            top: 15%; right: 10%;
+            opacity: 0.8;
+        }
+
+        .moon::after {
+            content: '';
+            position: absolute;
+            width: 30px; height: 30px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 50%;
+            top: 40%; left: 30%;
+            box-shadow: 40px 20px 0 -5px rgba(0,0,0,0.15), -20px 50px 0 -10px rgba(0,0,0,0.1);
+        }
+
+        /* 通用区块 */
+        section {
+            padding: 100px 50px;
+            max-width: 1200px;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        .section-title {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 20px;
+            background: linear-gradient(90deg, #fff, #aaa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .section-sub {
+            color: #666;
+            font-size: 1.1rem;
+            margin-bottom: 60px;
+        }
+
+        /* 玻璃卡片 */
+        .glass-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 30px;
+        }
+
+        .glass-card {
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 40px;
+            backdrop-filter: blur(20px);
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(circle, rgba(0,212,255,0.1) 0%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.4s;
+        }
+
+        .glass-card:hover::before { opacity: 1; }
+        .glass-card:hover {
+            transform: translateY(-5px);
+            border-color: rgba(0,212,255,0.3);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+
+        .glass-card .icon {
+            width: 50px; height: 50px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+        }
+
+        .glass-card h3 {
+            font-size: 1.3rem;
+            margin-bottom: 10px;
+            color: #fff;
+        }
+
+        .glass-card p {
+            color: #888;
+            font-size: 0.95rem;
+            line-height: 1.8;
+        }
+
+        /* 时间线 */
+        .timeline {
+            position: relative;
+            padding-left: 40px;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0;
+            width: 2px; height: 100%;
+            background: linear-gradient(to bottom, var(--primary), var(--secondary));
+        }
+
+        .timeline-item {
+            position: relative;
+            margin-bottom: 50px;
+            padding-left: 30px;
+            opacity: 0;
+            transform: translateX(20px);
+            transition: all 0.6s ease;
+        }
+
+        .timeline-item.visible {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -36px; top: 5px;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--primary);
+            box-shadow: 0 0 20px var(--primary);
+        }
+
+        .timeline-item .year {
+            font-size: 0.9rem;
+            color: var(--primary);
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+
+        .timeline-item h4 {
+            font-size: 1.2rem;
+            margin-bottom: 8px;
+            color: #fff;
+        }
+
+        .timeline-item p {
+            color: #777;
+            font-size: 0.9rem;
+        }
+
+        /* 数据面板 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 40px;
+        }
+
+        .stat-box {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 30px;
+            text-align: center;
+            transition: all 0.3s;
+        }
+
+        .stat-box:hover {
+            border-color: var(--primary);
+            background: rgba(0,212,255,0.05);
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 900;
+            color: var(--primary);
+            font-family: 'Courier New', monospace;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.85rem;
+            margin-top: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* 页脚 */
+        footer {
+            text-align: center;
+            padding: 60px 20px;
+            border-top: 1px solid var(--border);
+            color: #555;
+            font-size: 0.9rem;
+        }
+
+        footer a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            nav { padding: 15px 20px; }
+            .nav-links { display: none; }
+            section { padding: 60px 20px; }
+            .moon { width: 120px; height: 120px; top: 10%; right: 5%; }
+        }
+
+        /* 滚动条 */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--dark); }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+    </style>
+</head>
+<body>
+
+    <div id="starfield"></div>
+
+    <nav>
+        <div class="logo">WEISUANDI</div>
+        <div class="nav-links">
+            <a href="#vision">愿景</a>
+            <a href="#modules">基地模块</a>
+            <a href="#timeline">时间线</a>
+            <a href="#data">环境数据</a>
+        </div>
+    </nav>
+
+    <div class="moon"></div>
+
+    <section class="hero">
+        <h1>月球基地 2049</h1>
+        <p>在寂静的月海之上，建立人类第一个自给自足的地外栖息地。这不是科幻，这是正在发生的未来。</p>
+        <div class="badge" onclick="document.getElementById('vision').scrollIntoView({behavior: 'smooth'})">
+            ↓ 探索基地
+        </div>
+    </section>
+
+    <section id="vision">
+        <h2 class="section-title">基地架构</h2>
+        <p class="section-sub">四大核心模块，构建可持续的月球生存系统</p>
+        <div class="glass-grid">
+            <div class="glass-card">
+                <div class="icon">🏠</div>
+                <h3>居住穹顶</h3>
+                <p>3D打印的蜂窝式居住舱，覆盖月壤防辐射层。内部模拟地球昼夜节律，为首批 50 名居民提供安全舒适的生活空间。</p>
+            </div>
+            <div class="glass-card">
+                <div class="icon">⚡</div>
+                <h3>能源矩阵</h3>
+                <p>表面铺设薄膜太阳能电池，配合小型核裂变反应堆（Kilopower）和再生氢氧燃料电池，实现 99.2% 能源自给。</p>
+            </div>
+            <div class="glass-card">
+                <div class="icon">🔬</div>
+                <h3>深空实验室</h3>
+                <p>利用月球低重力与真空环境，开展材料科学、天文观测和生物医学实验。微重力下的晶体生长纯度比地球高 300%。</p>
+            </div>
+            <div class="glass-card">
+                <div class="icon">🌱</div>
+                <h3>生态循环</h3>
+                <p>水培农业舱种植改良小麦与螺旋藻，闭环水循环系统从月壤提取冰水资源，氧气通过电解水与藻类光合作用双重供给。</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="timeline">
+        <h2 class="section-title">建设时间线</h2>
+        <p class="section-sub">从第一枚火箭到第一座城市，人类用了 24 年</p>
+        <div class="timeline">
+            <div class="timeline-item">
+                <div class="year">2025</div>
+                <h4>阿尔忒弥斯 III 着陆</h4>
+                <p>宇航员重返月球南极，确认水冰资源分布，建立临时营地。</p>
+            </div>
+            <div class="timeline-item">
+                <div class="year">2028</div>
+                <h4>无人建设阶段</h4>
+                <p>派遣机器人车队建设基础设施，3D打印居住舱外壳，铺设太阳能电池阵列。</p>
+            </div>
+            <div class="timeline-item">
+                <div class="year">2032</div>
+                <h4>首批常驻居民</h4>
+                <p>12 名科学家与工程师入住，启动水冰开采与氧气制备系统，实现 30 天自持。</p>
+            </div>
+            <div class="timeline-item">
+                <div class="year">2038</div>
+                <h4>农业自给突破</h4>
+                <p>水培舱实现 60% 食物自给，基地扩展至可容纳 200 人，开始接待商业旅客。</p>
+            </div>
+            <div class="timeline-item">
+                <div class="year">2049</div>
+                <h4>月球城市 Weisuandi</h4>
+                <p>连接多个穹顶的地下隧道网络建成，人口突破 2000，成为深空探索的中转站。</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="data">
+        <h2 class="section-title">月球环境数据</h2>
+        <p class="section-sub">实时模拟面板 — 基地外部传感器读数</p>
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-value" id="temp">-173</div>
+                <div class="stat-label">表面温度 °C</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">16.5%</div>
+                <div class="stat-label">地球重力</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="radiation">24</div>
+                <div class="stat-label">辐射剂量 μSv/h</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">29.5</div>
+                <div class="stat-label">地球日 / 月昼</div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <p>© 2049 Lunar Base Weisuandi. 人类的一小步，未来的起点。</p>
+        <p style="margin-top: 10px; font-size: 0.8rem;">由 <a href="https://weisuandi.com">weisuandi.com</a> 构想</p>
+    </footer>
+
+    <script>
+        // 生成星空
+        const starfield = document.getElementById('starfield');
+        for (let i = 0; i < 200; i++) {
+            const star = document.createElement('div');
+            star.className = 'star';
+            star.style.left = Math.random() * 100 + '%';
+            star.style.top = Math.random() * 100 + '%';
+            star.style.width = star.style.height = Math.random() * 3 + 'px';
+            star.style.setProperty('--duration', (Math.random() * 3 + 2) + 's');
+            star.style.animationDelay = Math.random() * 5 + 's';
+            starfield.appendChild(star);
+        }
+
+        // 滚动动画
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                }
+            });
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('.timeline-item').forEach(item => {
+            observer.observe(item);
+        });
+
+        // 模拟数据波动
+        setInterval(() => {
+            const temp = document.getElementById('temp');
+            const rad = document.getElementById('radiation');
+            const baseTemp = -173;
+            const baseRad = 24;
+            temp.textContent = Math.round(baseTemp + Math.random() * 10 - 5);
+            rad.textContent = (baseRad + Math.random() * 4 - 2).toFixed(1);
+        }, 3000);
+    </script>
+</body>
+</html>
