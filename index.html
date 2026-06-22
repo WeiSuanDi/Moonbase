@@ -36,7 +36,7 @@
 
       <div class="hero-text">
         <h1>月球基地<br><span>Moon Base</span></h1>
-        <p>在寂静的灰色荒原上，人类文明的下一站正在崛起。点击沙克尔顿环形山，开启你的南极基地沙盘推演。</p>
+        <p>在寂静的灰色荒原上，人类文明的下一站正在崛起。点击月球表面的任意基地标记，开启你的多基地沙盘推演。</p>
       </div>
 
       <div id="marker-tooltip"></div>
@@ -53,10 +53,31 @@
       <!-- Game Panel -->
       <div id="game-panel" class="hidden">
         <div class="game-title">基地沙盘推演</div>
-        <div class="game-subtitle">每一步选择都会实时影响配置指标</div>
+        <div class="game-subtitle">每一步选择都会实时影响配置指标；完成全部 6 步后可解锁 AI 深度产出。</div>
         <div class="site-tag" id="game-site-tag"><span class="dot"></span> 尚未选址</div>
         <div class="decision-list" id="decision-list"></div>
         <div class="stats-board hidden" id="stats-board"></div>
+        <button class="btn btn-ghost" id="suggest-btn" style="display:none; width:100%; margin-top:0.75rem;">
+          <span>✨</span> 让 AI 建议下一步
+        </button>
+        <div class="agent-actions" id="agent-actions" style="display:none;">
+          <button class="agent-action" data-output="summary">
+            <span class="agent-action-icon">📊</span>
+            <span>可行性简报</span>
+          </button>
+          <button class="agent-action" data-output="compare">
+            <span class="agent-action-icon">⚖️</span>
+            <span>多基地对比</span>
+          </button>
+          <button class="agent-action" data-output="story">
+            <span class="agent-action-icon">📖</span>
+            <span>基地一日</span>
+          </button>
+          <button class="agent-action" data-output="poster">
+            <span class="agent-action-icon">🚀</span>
+            <span>招募海报</span>
+          </button>
+        </div>
         <button class="btn btn-primary" id="generate-summary-btn" style="display:none; width:100%; margin-top:1rem;">生成可行性简报</button>
       </div>
 
@@ -67,27 +88,37 @@
   <!-- Modules -->
   <section id="modules">
     <h2 class="section-title">基地<span>架构</span></h2>
-    <p class="section-subtitle">四大核心系统支撑月球基地的永续运转</p>
+    <p class="section-subtitle">六大核心系统支撑月球基地的永续运转</p>
     <div class="module-grid">
-      <div class="module-card">
-        <div class="module-icon">🏠</div>
-        <h3>居住穹顶</h3>
-        <p>多层加压生态穹顶，集成辐射屏蔽与恒温循环，为首批 120 名常驻人员提供安全舒适的生活环境。</p>
-      </div>
       <div class="module-card">
         <div class="module-icon">⚡</div>
         <h3>能源矩阵</h3>
-        <p>表面薄膜太阳能阵列与微型核反应堆互补供电，确保长达 14 个地球日的月夜期间能源不间断。</p>
+        <p>微型核反应堆、大规模储能与薄膜太阳能阵列互补，确保长达 14 个地球日的月夜期间能源不间断。</p>
       </div>
       <div class="module-card">
-        <div class="module-icon">🔭</div>
-        <h3>深空实验室</h3>
-        <p>低重力、高真空、无大气干扰的极端环境，为天文观测、材料科学与生命科学提供绝佳实验平台。</p>
+        <div class="module-icon">💧</div>
+        <h3>水源循环</h3>
+        <p>永久阴影区水冰开采、闭环回收与地球补给多管齐下，为生命支持系统和火箭燃料提供保障。</p>
       </div>
       <div class="module-card">
-        <div class="module-icon">♻️</div>
-        <h3>生态循环</h3>
-        <p>水培农场与闭环生命支持系统，实现空气、水、废物的高效回收，将外部补给需求降至最低。</p>
+        <div class="module-icon">🛡️</div>
+        <h3>辐射屏蔽</h3>
+        <p>月壤覆盖、熔岩洞栖息与加厚舱壁三道防线，将宇宙射线与太阳粒子辐射降至长期安全阈值。</p>
+      </div>
+      <div class="module-card">
+        <div class="module-icon">📡</div>
+        <h3>深空链路</h3>
+        <p>激光通信、中继卫星与直联地球构成多层级网络，让月面每个角落都能与家园保持实时对话。</p>
+      </div>
+      <div class="module-card">
+        <div class="module-icon">🌱</div>
+        <h3>生态农场</h3>
+        <p>全封闭水培农场与藻类蛋白管协同产氧产粮，把外部食品补给需求降到最低。</p>
+      </div>
+      <div class="module-card">
+        <div class="module-icon">🚀</div>
+        <h3>月面交通</h3>
+        <p>跳跃器、质量投射器与地表缆车组成立体运输网，让资源、人员与设备在灰色荒原上高效流动。</p>
       </div>
     </div>
   </section>
@@ -106,7 +137,7 @@
         <div class="timeline-node">
           <div class="timeline-dot"></div>
           <div class="timeline-year">2032</div>
-          <div class="timeline-label">首个无人货运着陆点建成</div>
+          <div class="timeline-label">四大基地无人货运着陆</div>
         </div>
         <div class="timeline-node">
           <div class="timeline-dot"></div>
@@ -163,7 +194,7 @@
   <div id="result-panel">
     <div class="result-card">
       <button class="info-close" id="result-close" aria-label="关闭">×</button>
-      <h2>基地可行性简报</h2>
+      <h2 id="result-title">基地可行性简报</h2>
       <div class="meta">基于你的选择实时推演</div>
       <div class="result-body" id="result-body"></div>
       <div class="result-actions">
@@ -174,14 +205,19 @@
   </div>
 
   <!-- AI Chat -->
-  <button id="agent-fab" aria-label="向 AI 提问">💬</button>
+  <button id="agent-fab" aria-label="向 AI 提问">🤖</button>
   <div id="agent-chat">
     <div class="chat-header">
       <div class="chat-title">AI 基地顾问</div>
       <button class="chat-close" id="chat-close">×</button>
     </div>
     <div class="chat-messages" id="chat-messages">
-      <div class="message agent">你好！我是基地顾问。你可以问我关于 Shackleton 选址、能源、水源或辐射防护的任何问题。</div>
+      <div class="message agent">你好！我是基地顾问。点击月球上的任意基地开始推演，有问题随时问我。</div>
+    </div>
+    <div class="chat-chips" id="chat-chips">
+      <button class="chat-chip" data-question="哪个基地最适合工业采矿？">哪个基地最适合工业采矿？</button>
+      <button class="chat-chip" data-question="太阳能和核能怎么选？">太阳能和核能怎么选？</button>
+      <button class="chat-chip" data-question="静海基地的水源怎么解决？">静海基地的水源怎么解决？</button>
     </div>
     <div class="chat-input-row">
       <input type="text" id="chat-input" placeholder="输入问题…" autocomplete="off">
