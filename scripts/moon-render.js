@@ -69,17 +69,46 @@ export function initMoon() {
   const loaderEl = document.getElementById('loader');
   const loaderPercentEl = document.getElementById('loader-percent');
 
+  // 5% 为步进的平滑进度动画
+  let displayedProgress = 0;
+  let targetProgress = 0;
+  let progressInterval = null;
+
+  function updateDisplayedProgress() {
+    if (displayedProgress < targetProgress) {
+      displayedProgress += 5;
+      if (loaderPercentEl) {
+        loaderPercentEl.textContent = `${displayedProgress}%`;
+      }
+    } else {
+      clearInterval(progressInterval);
+      progressInterval = null;
+    }
+  }
+
+  function setTargetProgress(value) {
+    targetProgress = Math.min(100, Math.round(value / 5) * 5);
+    if (!progressInterval) {
+      progressInterval = setInterval(updateDisplayedProgress, 60);
+    }
+  }
+
   const loadingManager = new THREE.LoadingManager();
   loadingManager.onProgress = (_url, itemsLoaded, itemsTotal) => {
-    if (loaderPercentEl) {
-      loaderPercentEl.textContent = `${Math.round((itemsLoaded / itemsTotal) * 100)}%`;
-    }
+    setTargetProgress((itemsLoaded / itemsTotal) * 100);
   };
   loadingManager.onLoad = () => {
-    if (loaderEl) {
-      loaderEl.classList.add('hidden');
-      setTimeout(() => { loaderEl.style.display = 'none'; }, 800);
-    }
+    setTargetProgress(100);
+    // 等待进度动画到达 100% 后再隐藏加载层
+    const checkDone = setInterval(() => {
+      if (displayedProgress >= 100) {
+        clearInterval(checkDone);
+        if (loaderEl) {
+          loaderEl.classList.add('hidden');
+          setTimeout(() => { loaderEl.style.display = 'none'; }, 800);
+        }
+      }
+    }, 50);
   };
 
   const textureLoader = new THREE.TextureLoader(loadingManager);
