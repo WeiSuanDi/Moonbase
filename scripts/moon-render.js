@@ -61,6 +61,7 @@ const markers = [];
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
+let animFrameId = null;
 
 export function initMoon() {
   const container = document.getElementById('canvas-container');
@@ -73,6 +74,7 @@ export function initMoon() {
   let displayedProgress = 0;
   let targetProgress = 0;
   let progressInterval = null;
+  let checkDoneInterval = null;
 
   function updateDisplayedProgress() {
     if (displayedProgress < targetProgress) {
@@ -100,12 +102,13 @@ export function initMoon() {
   loadingManager.onLoad = () => {
     setTargetProgress(100);
     // 等待进度动画到达 100% 后再隐藏加载层
-    const checkDone = setInterval(() => {
+    checkDoneInterval = setInterval(() => {
       if (displayedProgress >= 100) {
-        clearInterval(checkDone);
+        clearInterval(checkDoneInterval);
+        checkDoneInterval = null;
         if (loaderEl) {
           loaderEl.classList.add('hidden');
-          setTimeout(() => { loaderEl.style.display = 'none'; }, 800);
+          setTimeout(() => { if (loaderEl) loaderEl.style.display = 'none'; }, 800);
         }
       }
     }, 50);
@@ -283,7 +286,7 @@ export function initMoon() {
   // Interaction
   const tooltip = document.getElementById('marker-tooltip');
 
-  container.addEventListener('click', event => {
+  function onContainerClick(event) {
     const intersects = getIntersects(event.clientX, event.clientY, container);
     if (intersects.length > 0) {
       const base = intersects[0].object.userData.base;
@@ -292,9 +295,9 @@ export function initMoon() {
         controls.autoRotate = false;
       }
     }
-  });
+  }
 
-  container.addEventListener('mousemove', event => {
+  function onContainerMouseMove(event) {
     const intersects = getIntersects(event.clientX, event.clientY, container);
     if (intersects.length > 0) {
       const base = intersects[0].object.userData.base;
@@ -309,21 +312,28 @@ export function initMoon() {
       tooltip?.classList.remove('visible');
       container.style.cursor = 'default';
     }
-  });
+  }
 
-  window.addEventListener('resize', () => {
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+  function onWindowResize() {
+    if (!container || !renderer) return;
+    var width = container.clientWidth;
+    var height = container.clientHeight;
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
     composer.setSize(width, height);
-    bloomPass.setSize(width, height);
-  });
+    composer.passes.forEach(function (pass) {
+      if (pass.setSize) pass.setSize(width, height);
+    });
+  }
+
+  container.addEventListener('click', onContainerClick);
+  container.addEventListener('mousemove', onContainerMouseMove);
+  window.addEventListener('resize', onWindowResize);
 
   // Animation loop
   function animate() {
-    requestAnimationFrame(animate);
+    animFrameId = requestAnimationFrame(animate);
     const t = clock.getElapsedTime();
     controls.update();
     stars.rotation.y += 0.0003;
@@ -341,6 +351,83 @@ export function initMoon() {
     composer.render();
   }
   animate();
+
+  // —— 返回清理函数 ——
+  return function cleanupMoon() {
+    if (animFrameId) {
+      cancelAnimationFrame(animFrameId);
+      animFrameId = null;
+    }
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      progressInterval = null;
+    }
+    if (checkDoneInterval) {
+      clearInterval(checkDoneInterval);
+      checkDoneInterval = null;
+    }
+    container.removeEventListener('click', onContainerClick);
+    container.removeEventListener('mousemove', onContainerMouseMove);
+    window.removeEventListener('resize', onWindowResize);
+    container.style.cursor = 'default';
+    if (tooltip) tooltip.classList.remove('visible');
+    if (loaderEl) {
+      loaderEl.classList.remove('hidden');
+      loaderEl.style.display = '';
+    }
+    if (loaderPercentEl) {
+      loaderPercentEl.textContent = '0%';
+    }
+    if (renderer) {
+      renderer.dispose();
+      if (renderer.domElement && renderer.domElement.parentNode) {
+        renderer.domElement.parentNode.removeChild(renderer.domElement);
+      }
+      renderer = null;
+    }
+    if (scene) {
+      scene.traverse(function (obj) {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach(function (m) { disposeMaterial(m); });
+          } else {
+            disposeMaterial(obj.material);
+          }
+        }
+      });
+      scene = null;
+    }
+    if (composer) {
+      composer.passes.forEach(function (pass) {
+        if (pass.dispose) pass.dispose();
+      });
+      composer = null;
+    }
+    if (controls) {
+      controls.dispose();
+      controls = null;
+    }
+    markers.length = 0;
+    selectedMarker = null;
+    camera = null;
+    moon = null;
+    markerGroup = null;
+    glow = null;
+    stars = null;
+    earth = null;
+  };
+}
+
+function disposeMaterial(material) {
+  if (material.map) material.map.dispose();
+  if (material.bumpMap) material.bumpMap.dispose();
+  if (material.displacementMap) material.displacementMap.dispose();
+  if (material.normalMap) material.normalMap.dispose();
+  if (material.specularMap) material.specularMap.dispose();
+  if (material.alphaMap) material.alphaMap.dispose();
+  if (material.envMap) material.envMap.dispose();
+  material.dispose();
 }
 
 function getIntersects(clientX, clientY, container) {
@@ -361,7 +448,7 @@ function latLonToVector3(lat, lon, radius) {
 }
 
 export function highlightSite(siteId) {
-  if (!markerGroup) return;
+  if (!markerGroup || !markerGroup.children) return;
 
   markerGroup.children.forEach(child => {
     const data = child.userData;

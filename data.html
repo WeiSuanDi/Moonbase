@@ -54,6 +54,7 @@
     (function() {
       const statNumbers = document.querySelectorAll('.stat-number');
       const statFluctuates = document.querySelectorAll('[data-fluctuate]');
+      let intervalId = null;
 
       function updateStats() {
         statNumbers.forEach((el, idx) => {
@@ -71,10 +72,19 @@
         });
       }
 
-      setInterval(updateStats, 2000);
+      intervalId = setInterval(updateStats, 2000);
       updateStats();
+
+      // 注册清理函数（导航离开时由 navigator.js 调用）
+      window.__pageCleanup = function() {
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      };
     })();
   </script>
+  <script src="scripts/navigator.js"></script>
   <script src="scripts/music-player.js"></script>
 </body>
 </html>

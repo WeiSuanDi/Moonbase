@@ -13,55 +13,147 @@ import {
   isDecisionComplete,
   getCompletedSteps
 } from './state.js';
-import { bases } from './moon-render.js';
+import { bases, highlightSite } from './moon-render.js';
 import { askAgent, generateSummary, compareBases, generateStory, generatePoster, suggestNext } from './agent-client.js';
 
-// DOM refs
-const infoPanel = document.getElementById('info-panel');
-const siteInfoContent = document.getElementById('site-info-content');
-const infoSubtitle = document.getElementById('info-subtitle');
-const infoTitle = document.getElementById('info-title');
-const infoDesc = document.getElementById('info-desc');
-const infoStats = document.getElementById('info-stats');
-const infoActions = document.getElementById('info-actions');
-const noSiteEl = document.getElementById('no-site');
-
-const gamePanel = document.getElementById('game-panel');
-const gameSiteTag = document.getElementById('game-site-tag');
-const decisionList = document.getElementById('decision-list');
-const statsBoard = document.getElementById('stats-board');
-const generateBtn = document.getElementById('generate-summary-btn');
-const agentActions = document.getElementById('agent-actions');
-const suggestBtn = document.getElementById('suggest-btn');
-
-const resultPanel = document.getElementById('result-panel');
-const resultTitle = document.getElementById('result-title');
-const resultBody = document.getElementById('result-body');
-const resultClose = document.getElementById('result-close');
-const resultReset = document.getElementById('result-reset');
-
-const agentFab = document.getElementById('agent-fab');
-const agentChat = document.getElementById('agent-chat');
-const chatClose = document.getElementById('chat-close');
-const chatMessages = document.getElementById('chat-messages');
-const chatInput = document.getElementById('chat-input');
-const chatSend = document.getElementById('chat-send');
-const chatChips = document.getElementById('chat-chips');
+// DOM refs（每次 init 时重新查询）
+let infoPanel, siteInfoContent, infoSubtitle, infoTitle, infoDesc, infoStats, infoActions, noSiteEl;
+let gamePanel, gameSiteTag, decisionList, statsBoard, generateBtn, agentActions, suggestBtn;
+let resultPanel, resultTitle, resultBody, resultClose, resultReset;
+let agentFab, agentChat, chatClose, chatMessages, chatInput, chatSend, chatChips;
 
 let isGenerating = false;
+let unsubscribe = null;
+
+function queryDom() {
+  infoPanel = document.getElementById('info-panel');
+  siteInfoContent = document.getElementById('site-info-content');
+  infoSubtitle = document.getElementById('info-subtitle');
+  infoTitle = document.getElementById('info-title');
+  infoDesc = document.getElementById('info-desc');
+  infoStats = document.getElementById('info-stats');
+  infoActions = document.getElementById('info-actions');
+  noSiteEl = document.getElementById('no-site');
+
+  gamePanel = document.getElementById('game-panel');
+  gameSiteTag = document.getElementById('game-site-tag');
+  decisionList = document.getElementById('decision-list');
+  statsBoard = document.getElementById('stats-board');
+  generateBtn = document.getElementById('generate-summary-btn');
+  agentActions = document.getElementById('agent-actions');
+  suggestBtn = document.getElementById('suggest-btn');
+
+  resultPanel = document.getElementById('result-panel');
+  resultTitle = document.getElementById('result-title');
+  resultBody = document.getElementById('result-body');
+  resultClose = document.getElementById('result-close');
+  resultReset = document.getElementById('result-reset');
+
+  agentFab = document.getElementById('agent-fab');
+  agentChat = document.getElementById('agent-chat');
+  chatClose = document.getElementById('chat-close');
+  chatMessages = document.getElementById('chat-messages');
+  chatInput = document.getElementById('chat-input');
+  chatSend = document.getElementById('chat-send');
+  chatChips = document.getElementById('chat-chips');
+}
+
+// —— 事件处理（具名函数，便于绑定和解绑） ——
+
+function onResultReset() {
+  hideResult();
+  resetGame();
+}
+
+function onRunAgentSummary() { runAgentOutput('summary'); }
+
+function onAgentFabClick() {
+  if (agentChat) agentChat.classList.toggle('visible');
+}
+
+function onChatCloseClick() {
+  if (agentChat) agentChat.classList.remove('visible');
+}
+
+function onChatSendClick() { sendChat(); }
+
+function onChatInputKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChat();
+  }
+}
+
+function onAgentActionsClick(e) {
+  const btn = e.target.closest('[data-output]');
+  if (!btn) return;
+  const type = btn.dataset.output;
+  if (type) runAgentOutput(type);
+}
+
+function onChatChipsClick(e) {
+  const chip = e.target.closest('.chat-chip');
+  if (!chip) return;
+  if (chatInput) chatInput.value = chip.dataset.question || chip.textContent;
+  sendChat();
+}
+
+function onSuggestNextClick() { onSuggestNext(); }
+
+function bindEvents() {
+  if (resultClose) resultClose.addEventListener('click', hideResult);
+  if (resultReset) resultReset.addEventListener('click', onResultReset);
+  if (generateBtn) generateBtn.addEventListener('click', onRunAgentSummary);
+  if (suggestBtn) suggestBtn.addEventListener('click', onSuggestNextClick);
+  if (agentFab) agentFab.addEventListener('click', onAgentFabClick);
+  if (chatClose) chatClose.addEventListener('click', onChatCloseClick);
+  if (chatSend) chatSend.addEventListener('click', onChatSendClick);
+  if (chatInput) chatInput.addEventListener('keydown', onChatInputKeydown);
+  if (agentActions) agentActions.addEventListener('click', onAgentActionsClick);
+  if (chatChips) chatChips.addEventListener('click', onChatChipsClick);
+}
+
+function unbindEvents() {
+  if (resultClose) resultClose.removeEventListener('click', hideResult);
+  if (resultReset) resultReset.removeEventListener('click', onResultReset);
+  if (generateBtn) generateBtn.removeEventListener('click', onRunAgentSummary);
+  if (suggestBtn) suggestBtn.removeEventListener('click', onSuggestNextClick);
+  if (agentFab) agentFab.removeEventListener('click', onAgentFabClick);
+  if (chatClose) chatClose.removeEventListener('click', onChatCloseClick);
+  if (chatSend) chatSend.removeEventListener('click', onChatSendClick);
+  if (chatInput) chatInput.removeEventListener('keydown', onChatInputKeydown);
+  if (agentActions) agentActions.removeEventListener('click', onAgentActionsClick);
+  if (chatChips) chatChips.removeEventListener('click', onChatChipsClick);
+}
+
+// —— 核心逻辑（保持不变，但使用 queryDom 后的引用） ——
 
 function init() {
+  queryDom();
   resolveSiteFromUrl();
   bindEvents();
-  bindAgentActions();
-  subscribe(render);
+  unsubscribe = subscribe(render);
   const state = getState();
   render(state);
   if (state.site) {
     const base = bases.find(b => b.id === state.site);
     if (base) showBaseInfo(base);
+    if (highlightSite) highlightSite(state.site);
   }
 }
+
+function cleanup() {
+  unbindEvents();
+  if (unsubscribe) {
+    unsubscribe();
+    unsubscribe = null;
+  }
+  isGenerating = false;
+}
+
+// 注册页面生命周期（由 navigator.js 调用）
+window.__pageInit = init;
+window.__pageCleanup = cleanup;
 
 // 优先使用 URL 参数中的选址；其次保留已有 state；否则提示返回首页
 function resolveSiteFromUrl() {
@@ -72,38 +164,8 @@ function resolveSiteFromUrl() {
   }
 }
 
-function bindEvents() {
-  resultClose.addEventListener('click', hideResult);
-  resultReset.addEventListener('click', () => {
-    hideResult();
-    resetGame();
-  });
-
-  generateBtn.addEventListener('click', () => runAgentOutput('summary'));
-  suggestBtn?.addEventListener('click', onSuggestNext);
-
-  agentFab.addEventListener('click', () => agentChat.classList.toggle('visible'));
-  chatClose.addEventListener('click', () => agentChat.classList.remove('visible'));
-  chatSend.addEventListener('click', sendChat);
-  chatInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendChat();
-    }
-  });
-}
-
-function bindAgentActions() {
-  if (!agentActions) return;
-  agentActions.addEventListener('click', e => {
-    const btn = e.target.closest('[data-output]');
-    if (!btn) return;
-    const type = btn.dataset.output;
-    if (type) runAgentOutput(type);
-  });
-}
-
 function showBaseInfo(base) {
+  if (!infoSubtitle) return;
   const meta = siteMeta[base.id];
   infoSubtitle.textContent = base.subtitle;
   infoTitle.textContent = base.name;
@@ -130,6 +192,7 @@ function showBaseInfo(base) {
 }
 
 function render(state) {
+  if (!gamePanel) return;
   const hasSite = !!state.site;
 
   if (hasSite) {
@@ -152,12 +215,13 @@ function render(state) {
   }
 
   const complete = isDecisionComplete(state);
-  generateBtn.style.display = complete ? 'block' : 'none';
+  if (generateBtn) generateBtn.style.display = complete ? 'block' : 'none';
   if (agentActions) agentActions.style.display = complete ? 'grid' : 'none';
   if (suggestBtn) suggestBtn.style.display = hasSite && !complete ? 'inline-flex' : 'none';
 }
 
 function renderGamePanel(state) {
+  if (!decisionList) return;
   const site = siteMeta[state.site];
   const completed = getCompletedSteps(state);
   gameSiteTag.innerHTML = `<span class="dot"></span> 已选选址：${site?.name || state.site} <span class="progress-tag">${completed}/${steps.length}</span>`;
@@ -200,6 +264,7 @@ function renderGamePanel(state) {
 }
 
 function renderStats(metrics, state) {
+  if (!statsBoard) return;
   const powerClass = metrics.powerSurplus_kW >= 30 ? 'good' : metrics.powerSurplus_kW >= 0 ? 'warn' : 'bad';
   const radiationClass = metrics.radiation_mSv_y <= 100 ? 'good' : metrics.radiation_mSv_y <= 200 ? 'warn' : 'bad';
   const waterClass = metrics.waterSupply_t_y >= 500 ? 'good' : metrics.waterSupply_t_y >= 200 ? 'warn' : 'bad';
@@ -266,7 +331,6 @@ async function runAgentOutput(type) {
   }
 }
 
-// 构造“假如选其他基地并使用同样决策”的 state 列表，用于对比
 function buildAllSiteStates(currentState) {
   return bases.map(base => {
     const alt = { ...currentState, site: base.id };
@@ -340,16 +404,16 @@ function buildLocalCompare(currentState, currentMetrics) {
 }
 
 function showResult(html, title) {
+  if (!resultPanel || !resultTitle) return;
   resultTitle.textContent = title || 'AI 产出';
   resultBody.innerHTML = html;
   resultPanel.classList.add('visible');
 }
 
 function hideResult() {
-  resultPanel.classList.remove('visible');
+  if (resultPanel) resultPanel.classList.remove('visible');
 }
 
-// 简单的 Markdown → HTML，仅处理标题、列表、加粗
 function markdownToHtml(md) {
   let html = md
     .replace(/^### (.*$)/gim, '<h3>$1</h3>')
@@ -380,6 +444,7 @@ function markdownToHtml(md) {
 
 // Agent chat
 function appendMessage(role, text) {
+  if (!chatMessages) return;
   const msg = document.createElement('div');
   msg.className = `message ${role}`;
   msg.textContent = text;
@@ -388,6 +453,7 @@ function appendMessage(role, text) {
 }
 
 function showTyping() {
+  if (!chatMessages) return;
   const el = document.createElement('div');
   el.className = 'message agent typing';
   el.id = 'chat-typing';
@@ -402,12 +468,13 @@ function removeTyping() {
 }
 
 async function sendChat() {
+  if (!chatInput) return;
   const text = chatInput.value.trim();
   if (!text) return;
   chatInput.value = '';
   appendMessage('user', text);
   showTyping();
-  chatSend.disabled = true;
+  if (chatSend) chatSend.disabled = true;
 
   try {
     const state = getState();
@@ -418,23 +485,8 @@ async function sendChat() {
     removeTyping();
     appendMessage('agent', `请求失败：${err.message}`);
   } finally {
-    chatSend.disabled = false;
+    if (chatSend) chatSend.disabled = false;
   }
 }
 
-// Quick chips
-if (chatChips) {
-  chatChips.addEventListener('click', e => {
-    const chip = e.target.closest('.chat-chip');
-    if (!chip) return;
-    chatInput.value = chip.dataset.question || chip.textContent;
-    sendChat();
-  });
-}
-
-// Start
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
-}
+// 注意：不在此处自动初始化，navigator.js 会在模块加载完毕后调用 window.__pageInit()
