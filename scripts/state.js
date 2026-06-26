@@ -1,8 +1,8 @@
 // 单一状态源（single source of truth）
-// v2：四大基地全可交互 + 六大决策维度
+// v2.5：引入 ReferenceMaterials 真实数据校准选址与规则表
 
-const STORAGE_KEY = 'moonBaseState_v2';
-const LEGACY_STORAGE_KEY = 'moonBaseState_v1';
+const STORAGE_KEY = 'moonBaseState_v25';
+const LEGACY_KEYS = ['moonBaseState_v2', 'moonBaseState_v1'];
 
 // ===== 决策流程 =====
 export const steps = [
@@ -17,19 +17,19 @@ export const steps = [
 // ===== 选项 =====
 export const options = {
   energy: [
-    { id: 'nuclear', label: '微型核反应堆', hint: '稳定大功率，载荷重，安全冗余高', icon: '⚛️' },
-    { id: 'storage', label: '大规模储能', hint: '白天充电、月夜放电，依赖日照窗口', icon: '🔋' },
-    { id: 'solar', label: '薄膜太阳能', hint: '重量轻、成本低，受月夜与阴影限制', icon: '☀️' }
+    { id: 'nuclear', label: '微型核反应堆（FSP 40 kWe）', hint: '稳定覆盖月夜，6 t 级质量，ISRU 与长期驻留的门槛技术', icon: '⚛️' },
+    { id: 'storage', label: '太阳能 + 再生燃料电池', hint: '白天电解制氢、月夜燃料电池放电，质量随日照窗口变化大', icon: '🔋' },
+    { id: 'solar', label: '薄膜太阳能阵列', hint: '重量轻，但月夜需停工或配合储能，高纬度收益受限', icon: '☀️' }
   ],
   water: [
-    { id: 'isru', label: '就地采水冰（ISRU）', hint: '利用阴影区水冰，减少地球补给', icon: '❄️' },
-    { id: 'earth_supply', label: '地球补给', hint: '技术成熟，但运费昂贵且供应线脆弱', icon: '🚀' },
-    { id: 'recycling', label: '循环水回收', hint: '高回收率但依赖电力，适合低冰区域', icon: '♻️' }
+    { id: 'isru', label: '就地采水冰（ISRU）', hint: '热升华法约 2.4 kWh/kg，高度依赖 PSR 水冰储量', icon: '❄️' },
+    { id: 'earth_supply', label: '地球补给', hint: '技术成熟，但每公斤运价极高，长期难以支撑百人基地', icon: '🚀' },
+    { id: 'recycling', label: '循环水回收（ECLSS）', hint: 'ISS 级约 93% 回收率，适合低冰区域 but 耗电', icon: '♻️' }
   ],
   radiation: [
-    { id: 'regolith', label: '埋入月壤', hint: '覆盖 2–3 米月壤，防护效果最佳但工程量大', icon: '🏔️' },
-    { id: 'cave', label: '利用熔岩洞', hint: '天然厚岩层屏蔽，但空间受限、探测不足', icon: '🕳️' },
-    { id: 'hull', label: '加厚舱壁', hint: '现有舱体技术，快速部署但质量大、屏蔽有限', icon: '🛡️' }
+    { id: 'regolith', label: '埋入 2–3 m 月壤', hint: '3 m 月壤可将年剂量降至 ~50 mSv，工程量大但材料现成', icon: '🏔️' },
+    { id: 'cave', label: '利用熔岩洞/永久阴影坑缘', hint: '水平熔岩管内部可 <1 mSv/年，但选址与结构验证风险未知', icon: '🕳️' },
+    { id: 'hull', label: '加厚舱壁 + 风暴掩体', hint: '快速部署，可防 SPE，但 GCR 长期剂量仍偏高', icon: '🛡️' }
   ],
   communication: [
     { id: 'laser', label: '激光通信', hint: '带宽极高、低延迟，但对指向精度要求苛刻', icon: '📡' },
@@ -48,123 +48,247 @@ export const options = {
   ]
 };
 
-// ===== 基地元数据 =====
+// ===== 参考阈值（用于 UI 对比） =====
+export const benchmarks = {
+  earthBackground_mSv_y: 2.4,
+  issDose_mSv_y: 210,
+  nasaCareerLimit_mSv: 600,
+  nasaAnnualLimit_mSv: 500,
+  fspPower_kW: 40,
+  fspMass_kg: 6000,
+  fspLife_y: 10,
+  thermalExtraction_kWh_kg: 2.45,
+  lunarNight_h: 336, // 赤道约 14 个地球日
+  lunarNightSouthPole_h: 112 // Connecting Ridge 最长连续阴影
+};
+
+// ===== 基地元数据（引入 ReferenceMaterials 真实数据） =====
 export const siteMeta = {
   shackleton: {
     name: '沙克尔顿环形山',
     subtitle: '南极极地科研前哨',
-    desc: '位于月球南极，坑口近乎永昼，永久阴影区富含水冰。能源与水资源的“黄金组合”，但极端低温与险峻地形是主要代价。',
+    desc: '位于月球南极（89.67°S, 129.78°E）。坑缘几乎全年有光照，坑底永久阴影区是水冰冷阱。光照与水冰的“黄金组合”，但极端低温与险峻地形代价高昂。',
+    lat: -89.67,
+    lon: 129.78,
     baseTempC: -220,
-    baseRadiation_mSv_y: 350,
-    iceAvailable_t: 1500,
-    sunHoursRatio: 0.82,
+    baseRadiation_mSv_y: 355,
+    iceAvailable_t: 1784, // LAMP 表面霜总量 kg → t
+    iceConcentration: '2.0% 表面霜 / 上部 1-2m 约 5-10 wt%',
+    iceConfidence: '中',
+    sunHoursRatio: 0.855,
+    maxSunHoursRatio: 0.9255,
+    longestShadow_h: 65,
+    psrTemp_K: 29,
+    slope_deg: 14.8,
     baseMass_t: 200,
     basePower_kW: 100,
     difficulty: 3,
-    tags: ['永昼', '水冰丰富', '极低温']
+    tags: ['永昼坑缘', 'PSR 水冰', '极低温', '光照率 85.5%'],
+    reference: 'NASA LOLA / LAMP / Mini-RF'
+  },
+  connecting_ridge: {
+    name: '连接岭 C1-0',
+    subtitle: '南极综合最优选址',
+    desc: '连接 Shackleton 与 de Gerlache 的山脊。2 m 高度平均光照率 88%，最长连续阴影仅 112 h，且距离最近 PSR 仅 100 m。太阳能阵列与水冰提取区可步行共存。',
+    lat: -88.5,
+    lon: 0,
+    baseTempC: -150,
+    baseRadiation_mSv_y: 340,
+    iceAvailable_t: 50000, // 邻近 PSR，估算
+    iceConcentration: '邻近 PSR，可采',
+    iceConfidence: '中',
+    sunHoursRatio: 0.88,
+    maxSunHoursRatio: 0.921,
+    longestShadow_h: 112,
+    psrTemp_K: 50,
+    slope_deg: 7.5,
+    baseMass_t: 190,
+    basePower_kW: 95,
+    difficulty: 2,
+    tags: ['88% 光照', 'PSR 100m', '坡度 <10°', '综合最优'],
+    reference: 'Gläser et al. (2020)'
+  },
+  cabeus: {
+    name: '卡比厄斯撞击坑',
+    subtitle: '富冰永久阴影区',
+    desc: '位于月球南极（85.3°S, 41.8°W）。2009 年 LCROSS 撞击实验直接测得羽流含水量 5.6±2.9 wt%，是月球水冰原位确认的最高置信度地点。',
+    lat: -85.3,
+    lon: -41.8,
+    baseTempC: -250,
+    baseRadiation_mSv_y: 360,
+    iceAvailable_t: 163000000, // 1.63 亿吨
+    iceConcentration: '5.6±2.9 wt%（LCROSS 实测）',
+    iceConfidence: '高',
+    sunHoursRatio: 0.0,
+    maxSunHoursRatio: 0.0,
+    longestShadow_h: 9999,
+    psrTemp_K: 20,
+    slope_deg: 5,
+    baseMass_t: 210,
+    basePower_kW: 105,
+    difficulty: 3,
+    tags: ['LCROSS 实测富冰', '永久阴影', '极低温', '无日照'],
+    reference: 'Colaprete et al. (2010), Science'
+  },
+  marius_lava_tube: {
+    name: '马里乌斯丘陵熔岩管',
+    subtitle: '天然地下庇护所',
+    desc: '位于月球正面北部（14.3°N, 303.5°E）。天窗直径约 58 m，GRAIL 估计下方存在长 60 km、宽 9 km 的空腔。天然辐射屏蔽与热稳定性使其成为改变游戏规则的选址。',
+    lat: 14.3,
+    lon: -56.5,
+    baseTempC: -20,
+    baseRadiation_mSv_y: 355,
+    iceAvailable_t: 200,
+    iceConcentration: '非极区，水冰稀缺',
+    iceConfidence: '低',
+    sunHoursRatio: 0.5,
+    maxSunHoursRatio: 0.5,
+    longestShadow_h: 336,
+    psrTemp_K: null,
+    slope_deg: 3,
+    baseMass_t: 170,
+    basePower_kW: 85,
+    difficulty: 3,
+    tags: ['天然辐射屏蔽', '温度稳定', '结构待验证', '水冰稀缺'],
+    reference: 'Zhu et al. (2024), Icarus / JAXA PHITS'
   },
   tranquility: {
     name: '静海纪念站',
     subtitle: '赤道文化与交通枢纽',
-    desc: '坐落在阿波罗 11 号首次登月点附近，日照充沛、地形平缓，是旅游与科普教育的理想节点，但水冰资源极度稀缺。',
+    desc: '坐落在阿波罗 11 号首次登月点（0.7°N, 23.5°E）附近。日照充沛、地形平缓，是旅游与科普教育的理想节点，但水冰资源极度稀缺。',
+    lat: 0.7,
+    lon: 23.5,
     baseTempC: -50,
     baseRadiation_mSv_y: 280,
     iceAvailable_t: 80,
+    iceConcentration: '<0.1 wt% 羟基',
+    iceConfidence: '低',
     sunHoursRatio: 0.95,
+    maxSunHoursRatio: 0.95,
+    longestShadow_h: 336,
+    psrTemp_K: null,
+    slope_deg: 2,
     baseMass_t: 180,
     basePower_kW: 80,
     difficulty: 1,
-    tags: ['日照充沛', '水冰稀缺', '地标意义']
+    tags: ['日照充沛', '水冰稀缺', '地标意义', '地形平缓'],
+    reference: 'Apollo 11 / LRO'
   },
   imbrium: {
     name: '雨海采矿区',
     subtitle: '中纬度工业基地',
-    desc: '雨海盆地的玄武岩富含钛铁矿与氦-3 资源。这里部署了自动化采矿与冶炼设施，是月球工业化的起点。',
+    desc: '雨海盆地（32.8°N, -15.6°E）的玄武岩富含钛铁矿与氦-3 资源。这里部署自动化采矿与冶炼设施，是月球工业化的起点。',
+    lat: 32.8,
+    lon: -15.6,
     baseTempC: -120,
     baseRadiation_mSv_y: 320,
     iceAvailable_t: 400,
+    iceConcentration: '痕量羟基',
+    iceConfidence: '低',
     sunHoursRatio: 0.70,
+    maxSunHoursRatio: 0.70,
+    longestShadow_h: 336,
+    psrTemp_K: null,
+    slope_deg: 4,
     baseMass_t: 220,
     basePower_kW: 90,
     difficulty: 2,
-    tags: ['矿产丰富', '工业需求', '月夜较长']
+    tags: ['矿产丰富', '工业需求', '月夜较长'],
+    reference: 'Lunar Sourcebook / Apollo 15'
   },
   tycho: {
     name: '第谷观测台',
     subtitle: '高地深空观测平台',
-    desc: '位于壮观的第谷环形山区域，高海拔、地质年轻、地貌崎岖，是天文观测与行星科学研究的理想场所。',
+    desc: '位于壮观的第谷环形山区域（43.3°S, -11.2°E）。高海拔、地质年轻、地貌崎岖，是天文观测与行星科学研究的理想场所。',
+    lat: -43.3,
+    lon: -11.2,
     baseTempC: -160,
     baseRadiation_mSv_y: 340,
     iceAvailable_t: 200,
+    iceConcentration: '痕量',
+    iceConfidence: '低',
     sunHoursRatio: 0.75,
+    maxSunHoursRatio: 0.75,
+    longestShadow_h: 320,
+    psrTemp_K: null,
+    slope_deg: 12,
     baseMass_t: 190,
     basePower_kW: 85,
     difficulty: 2,
-    tags: ['高海拔', '观测窗口', '地形复杂']
+    tags: ['高海拔', '观测窗口', '地形复杂'],
+    reference: 'LROC / Apollo 17 喷射物'
   }
 };
 
 // ===== 规则表：每个选项对基地指标的增量影响 =====
-// 新增 siteModifier：针对特定基地的额外修正
 export const ruleTable = {
   energy: {
     nuclear: {
-      powerBalance_kW: 60, mass_t: 80, riskScore: 2, costLevel: 3, sustainability: 4,
-      note: '核能稳定覆盖月夜，但 Shackleton 的极低温对热管理提出最高要求。'
+      powerBalance_kW: 45, mass_t: 60, riskScore: 2, costLevel: 3, sustainability: 5,
+      note: 'NASA FSP 40 kWe / ~6 t / 10 年：核裂变是月夜连续运行与 ISRU 的门槛技术，质量效率约为太阳能+储能的 2 倍以上。'
     },
     storage: {
-      powerBalance_kW: -10, mass_t: 60, riskScore: 1, costLevel: 2, sustainability: 3,
+      powerBalance_kW: -10, mass_t: 55, riskScore: 1, costLevel: 2, sustainability: 3,
       siteModifier: {
-        shackleton: { powerBalance_kW: 25 }, // 永昼充电窗口长
-        tranquility: { powerBalance_kW: 35 },
-        imbrium: { powerBalance_kW: 5 },
-        tycho: { powerBalance_kW: 10 }
+        shackleton: { powerBalance_kW: 30, mass_t: 10 }, // 永昼窗口长，储能需求小
+        connecting_ridge: { powerBalance_kW: 25, mass_t: 15 },
+        cabeus: { powerBalance_kW: -25, mass_t: 30 }, // 永久阴影，几乎无法充电
+        marius_lava_tube: { powerBalance_kW: 0, mass_t: 10 },
+        tranquility: { powerBalance_kW: 35, mass_t: 5 },
+        imbrium: { powerBalance_kW: 10, mass_t: 10 },
+        tycho: { powerBalance_kW: 15, mass_t: 10 }
       },
-      note: '储能系统收益高度依赖日照窗口，赤道最高、高纬最低。'
+      note: '太阳能+RFC：40 kWe 连续功率约需 14.5 t 储能（按 550 Wh/kg 目标），收益高度依赖日照窗口。'
     },
     solar: {
       powerBalance_kW: 20, mass_t: 25, riskScore: 1, costLevel: 1, sustainability: 2,
       siteModifier: {
         shackleton: { powerBalance_kW: 25 },
+        connecting_ridge: { powerBalance_kW: 30 },
+        cabeus: { powerBalance_kW: -40 }, // 无日照
+        marius_lava_tube: { powerBalance_kW: 5 },
         tranquility: { powerBalance_kW: 40 },
-        imbrium: { powerBalance_kW: 5 },
+        imbrium: { powerBalance_kW: 10 },
         tycho: { powerBalance_kW: 15 }
       },
-      note: '太阳能重量轻，但月夜与阴影区作业需要配合储能或停工。'
+      note: '薄膜太阳能轻量，但月夜与阴影区需停工或配合储能；月面年均衰减约 2.5%，单次大 SPE 可永久损失 5–10%。'
     }
   },
   water: {
     isru: {
-      waterSupply_t_y: 600, mass_t: 50, powerConsumption_kW: 15, riskScore: 2, costLevel: 2, sustainability: 5,
+      waterSupply_t_y: 400, mass_t: 50, powerConsumption_kW: 15, riskScore: 2, costLevel: 2, sustainability: 5,
       siteModifier: {
-        shackleton: { waterSupply_t_y: 600 }, // 总 1200
-        tranquility: { waterSupply_t_y: -250 }, // 水冰稀缺
-        imbrium: { waterSupply_t_y: 100 },
+        shackleton: { waterSupply_t_y: 600 },
+        connecting_ridge: { waterSupply_t_y: 550 },
+        cabeus: { waterSupply_t_y: 900 }, // 富冰
+        marius_lava_tube: { waterSupply_t_y: -200 }, // 非极区
+        tranquility: { waterSupply_t_y: -300 }, // 水冰稀缺
+        imbrium: { waterSupply_t_y: 50 },
         tycho: { waterSupply_t_y: 50 }
       },
-      note: '就地采水高度依赖冰储量，Shackleton 优势巨大，静海几乎不可行。'
+      note: '热升华法约 2.4 kWh/kg 水。Cabeus 与 Shackleton/Connecting Ridge 最具优势；静海/熔岩管几乎不可行。'
     },
     earth_supply: {
       waterSupply_t_y: 120, mass_t: 15, powerConsumption_kW: 2, riskScore: 1, costLevel: 3, sustainability: 1,
-      note: '地球运输代价极高，长期难以支撑百人级基地。'
+      note: '地球运输代价极高（每公斤 $30 万–120 万），长期难以支撑百人级基地。'
     },
     recycling: {
       waterSupply_t_y: 350, mass_t: 30, powerConsumption_kW: 12, riskScore: 1, costLevel: 2, sustainability: 4,
-      note: '循环水回收适合冰储量有限但电力充足的基地。'
+      note: 'ISS 级 ECLSS 水回收率约 93%，中国空间站达 95%；适合冰储量有限但电力充足的基地（如静海）。'
     }
   },
   radiation: {
     regolith: {
       radiationDelta_mSv_y: -250, mass_t: 60, riskScore: 2, costLevel: 2, sustainability: 5,
-      note: '2–3 米月壤可将辐射降至近地球背景水平。'
+      note: '2–3 m 月壤可将年剂量降至 ~50 mSv（辐射工作者限值）；7 m 可接近地球背景 5 mSv/年。'
     },
     cave: {
       radiationDelta_mSv_y: -300, mass_t: 10, riskScore: 3, costLevel: 1, sustainability: 5,
-      note: '熔岩洞天然屏蔽优异，但选址与内部改造风险未知。'
+      note: '水平熔岩管内部 GCR 年剂量可 <1 mSv，接近地球背景；但结构稳定性与原位验证风险高。'
     },
     hull: {
       radiationDelta_mSv_y: -150, mass_t: 30, riskScore: 1, costLevel: 2, sustainability: 3,
-      note: '舱壁加厚是最快部署方案，但仍高于长期安全阈值。'
+      note: '加厚舱壁 + 风暴掩体可防百年一遇 SPE，但 GCR 年剂量仍高于长期安全阈值。'
     }
   },
   communication: {
@@ -184,7 +308,7 @@ export const ruleTable = {
   habitat: {
     closed_farm: {
       foodSelfSufficiency: 80, mass_t: 45, powerConsumption_kW: 20, riskScore: 2, costLevel: 3, sustainability: 5,
-      note: '全封闭农场提供最高食品自给率，但系统复杂、启动周期长。'
+      note: '全封闭农场提供最高食品自给率，但系统复杂、启动周期长（参考 Yuegong-1 370 天闭合实验）。'
     },
     earth_food: {
       foodSelfSufficiency: 10, mass_t: 10, powerConsumption_kW: 2, riskScore: 1, costLevel: 3, sustainability: 1,
@@ -240,8 +364,10 @@ function loadFromStorage() {
       const parsed = JSON.parse(raw);
       return { ...defaultState, ...parsed, history: parsed.history || [] };
     }
-    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
-    if (legacy) return migrateLegacy(legacy);
+    for (const key of LEGACY_KEYS) {
+      const legacy = localStorage.getItem(key);
+      if (legacy) return migrateLegacy(legacy);
+    }
   } catch (e) {
     // 隐私模式可能无法读取
   }
@@ -355,18 +481,19 @@ export function computeMetrics(state) {
   });
 
   const powerSurplus_kW = site.basePower_kW + deltas.powerBalance_kW - deltas.powerConsumption_kW;
-  const radiation_mSv_y = Math.max(20, site.baseRadiation_mSv_y + (ruleTable.radiation[state.radiation]?.radiationDelta_mSv_y || 0));
+  const radiation_mSv_y = Math.max(5, site.baseRadiation_mSv_y + (ruleTable.radiation[state.radiation]?.radiationDelta_mSv_y || 0));
 
   // 综合可行性评分（0-100）
-  const powerScore = Math.min(25, Math.max(0, (powerSurplus_kW + 20) / 80 * 25));
-  const radiationScore = Math.min(20, Math.max(0, (400 - radiation_mSv_y) / 380 * 20));
+  const powerScore = Math.min(25, Math.max(0, (powerSurplus_kW + 30) / 100 * 25));
+  const radiationScore = Math.min(20, Math.max(0, (400 - radiation_mSv_y) / 395 * 20));
   const waterScore = Math.min(20, Math.max(0, deltas.waterSupply_t_y / 1200 * 20));
-  const sustainScore = Math.min(20, Math.max(0, deltas.sustainability / 28 * 20)); // 6步×5=30 取 28 为基准
+  const sustainScore = Math.min(20, Math.max(0, deltas.sustainability / 28 * 20));
   const riskPenalty = Math.min(15, Math.max(0, deltas.riskScore / 18 * 15));
   const viabilityScore = Math.round(powerScore + radiationScore + waterScore + sustainScore - riskPenalty);
 
   return {
     siteName: site.name,
+    siteMeta: site,
     powerSurplus_kW: Math.round(powerSurplus_kW),
     totalMass_t: Math.round(deltas.mass_t),
     waterSupply_t_y: Math.round(deltas.waterSupply_t_y),
@@ -378,7 +505,8 @@ export function computeMetrics(state) {
     foodSelfSufficiency: deltas.foodSelfSufficiency,
     transportCapacity: deltas.transportCapacity,
     viabilityScore,
-    notes: deltas.notes
+    notes: deltas.notes,
+    benchmarks
   };
 }
 

@@ -1,5 +1,6 @@
 // 首页脚本：仅负责加载 3D 月球，点击标记后跳转到沙盘推演子页
-import { initMoon } from './moon-render.js';
+import { initMoon, highlightSite, updateDecisionOverlays } from './moon-render.js';
+import { getState } from './state.js';
 
 let moonCleanup = null;
 
@@ -18,6 +19,13 @@ function onMarkerClick(e) {
 function init() {
   moonCleanup = initMoon();
   window.addEventListener('marker-click', onMarkerClick);
+
+  // 如果用户有进行中的推演状态，在首页高亮对应站点并叠加决策视觉签名
+  const state = getState();
+  if (state?.site) {
+    highlightSite(state.site);
+    updateDecisionOverlays(state);
+  }
 }
 
 function cleanup() {

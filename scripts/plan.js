@@ -13,7 +13,7 @@ import {
   isDecisionComplete,
   getCompletedSteps
 } from './state.js';
-import { bases, highlightSite } from './moon-render.js';
+import { bases, highlightSite, updateDecisionOverlays } from './moon-render.js';
 import { askAgent, generateSummary, compareBases, generateStory, generatePoster, suggestNext } from './agent-client.js';
 
 // DOM refs（每次 init 时重新查询）
@@ -141,6 +141,7 @@ function init() {
     const base = bases.find(b => b.id === state.site);
     if (base) showBaseInfo(base);
     if (highlightSite) highlightSite(state.site);
+    if (updateDecisionOverlays) updateDecisionOverlays(state);
   }
 }
 
@@ -180,14 +181,35 @@ function showBaseInfo(base) {
     infoTags.innerHTML = '';
   }
 
+  const iceDisplay = meta?.iceAvailable_t >= 1000000
+    ? (meta.iceAvailable_t / 1000000).toFixed(2) + 'M'
+    : meta?.iceAvailable_t >= 1000
+      ? (meta.iceAvailable_t / 1000).toFixed(1) + 'k'
+      : meta?.iceAvailable_t;
+
   infoStats.innerHTML = `
-    <div class="info-stat"><div class="info-stat-value">${base.altitude}</div><div class="info-stat-label">海拔</div></div>
     <div class="info-stat"><div class="info-stat-value">${base.lat}°</div><div class="info-stat-label">纬度</div></div>
     <div class="info-stat"><div class="info-stat-value">${base.lon}°</div><div class="info-stat-label">经度</div></div>
     <div class="info-stat"><div class="info-stat-value">${getSiteDifficulty(base.id)}</div><div class="info-stat-label">建设难度</div></div>
     <div class="info-stat"><div class="info-stat-value">${meta?.sunHoursRatio ? Math.round(meta.sunHoursRatio * 100) + '%' : '-'}</div><div class="info-stat-label">日照比</div></div>
-    <div class="info-stat"><div class="info-stat-value">${meta?.iceAvailable_t >= 1000 ? (meta.iceAvailable_t / 1000).toFixed(1) + 'k' : meta?.iceAvailable_t} t</div><div class="info-stat-label">可用水冰</div></div>
+    <div class="info-stat"><div class="info-stat-value">${meta?.longestShadow_h === 9999 ? '永久阴影' : meta?.longestShadow_h + ' h'}</div><div class="info-stat-label">最长阴影</div></div>
+    <div class="info-stat"><div class="info-stat-value">${iceDisplay} t</div><div class="info-stat-label">可用水冰</div></div>
   `;
+
+  // Reference & ice concentration block
+  const extraInfo = document.createElement('div');
+  extraInfo.className = 'info-extra';
+  extraInfo.innerHTML = `
+    <div class="info-extra-row"><span class="info-extra-label">水冰浓度</span><span class="info-extra-value">${meta?.iceConcentration || '—'}</span></div>
+    <div class="info-extra-row"><span class="info-extra-label">置信度</span><span class="info-extra-value">${meta?.iceConfidence || '—'}</span></div>
+    <div class="info-extra-row"><span class="info-extra-label">坡度</span><span class="info-extra-value">${meta?.slope_deg != null ? meta.slope_deg + '°' : '—'}</span></div>
+    <div class="info-extra-row"><span class="info-extra-label">参考来源</span><span class="info-extra-value">${meta?.reference || '—'}</span></div>
+  `;
+
+  // Replace any previous extra info
+  const existingExtra = siteInfoContent?.querySelector('.info-extra');
+  if (existingExtra) existingExtra.remove();
+  if (siteInfoContent) siteInfoContent.insertBefore(extraInfo, infoActions);
 
   infoActions.innerHTML = '';
   if (base.selectable) {
@@ -230,6 +252,8 @@ function render(state) {
   if (generateBtn) generateBtn.style.display = complete ? 'block' : 'none';
   if (agentActions) agentActions.style.display = complete ? 'grid' : 'none';
   if (suggestBtn) suggestBtn.style.display = hasSite && !complete ? 'inline-flex' : 'none';
+
+  if (updateDecisionOverlays) updateDecisionOverlays(state);
 }
 
 function renderGamePanel(state) {

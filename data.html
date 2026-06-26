@@ -16,33 +16,132 @@
       <li><a href="index.html">返回首页</a></li>
       <li><a href="menu.html">基地导览</a></li>
       <li><a href="plan.html">沙盘推演</a></li>
+      <li><a href="timeline.html">时间线</a></li>
+      <li><a href="knowledge.html">月球百科</a></li>
     </ul>
   </nav>
 
   <section id="data">
     <h2 class="section-title">月球<span>环境数据</span></h2>
-    <p class="section-subtitle">实时模拟月球表面环境参数的微小波动</p>
+    <p class="section-subtitle">基于 NASA、CNSA、ESA、JAXA 任务数据与同行评审文献的关键参数速查</p>
+
     <div class="data-grid">
       <div class="stat-box">
-        <div class="stat-label">表面温度</div>
-        <div class="stat-value"><span class="stat-number" data-base="-130" data-step="0.3">-130</span><span class="stat-unit">°C</span></div>
-        <div class="stat-fluctuate" data-fluctuate></div>
+        <div class="stat-label">表面重力</div>
+        <div class="stat-value"><span class="stat-number" data-base="1.62" data-step="0">1.62</span><span class="stat-unit">m/s²</span></div>
+        <div class="stat-fluctuate">地球的 16.5%</div>
       </div>
       <div class="stat-box">
-        <div class="stat-label">重力加速度</div>
-        <div class="stat-value"><span class="stat-number" data-base="1.62" data-step="0.001">1.62</span><span class="stat-unit">m/s²</span></div>
-        <div class="stat-fluctuate" data-fluctuate></div>
+        <div class="stat-label">赤道昼夜温差</div>
+        <div class="stat-value"><span class="stat-number" data-base="298" data-step="0">298</span><span class="stat-unit">K</span></div>
+        <div class="stat-fluctuate">-173°C 至 +127°C</div>
       </div>
       <div class="stat-box">
-        <div class="stat-label">辐射剂量</div>
-        <div class="stat-value"><span class="stat-number" data-base="0.5" data-step="0.01">0.5</span><span class="stat-unit">mSv/d</span></div>
-        <div class="stat-fluctuate" data-fluctuate></div>
+        <div class="stat-label">表面大气压</div>
+        <div class="stat-value"><span class="stat-number" data-base="3" data-step="0">3×10⁻¹⁵</span><span class="stat-unit">bar</span></div>
+        <div class="stat-fluctuate">接近硬真空</div>
       </div>
       <div class="stat-box">
         <div class="stat-label">月昼长度</div>
         <div class="stat-value"><span class="stat-number" data-base="14.75" data-step="0">14.75</span><span class="stat-unit">地球日</span></div>
-        <div class="stat-fluctuate" data-fluctuate></div>
+        <div class="stat-fluctuate">赤道月夜约 367 小时</div>
       </div>
+    </div>
+
+    <div class="data-tables">
+      <div class="data-table-card">
+        <h3>🌡️ 温度参数</h3>
+        <table class="data-table">
+          <thead><tr><th>位置</th><th>白天最高</th><th>夜晚最低</th><th>备注</th></tr></thead>
+          <tbody>
+            <tr><td>赤道</td><td>387–397 K (+114–124°C)</td><td>~95 K (-178°C)</td><td>温差约 290 K</td></tr>
+            <tr><td>极区光照区</td><td>~230 K (-43°C)</td><td>~75 K (-198°C)</td><td>温差约 120 K</td></tr>
+            <tr><td>PSR 坑底</td><td>—</td><td>18–50 K (-255 至 -223°C)</td><td>太阳系最冷环境之一</td></tr>
+            <tr><td>50 cm 以浅地下</td><td colspan="2">165–180 K (-108 至 -93°C)</td><td>无昼夜波动</td></tr>
+            <tr><td>熔岩管内部</td><td colspan="2">约 -20°C 至 +17°C</td><td>热稳定性极佳</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="data-table-card">
+        <h3>☢️ 辐射环境</h3>
+        <table class="data-table">
+          <thead><tr><th>场景</th><th>年有效剂量</th><th>备注</th></tr></thead>
+          <tbody>
+            <tr><td>地球表面自然背景</td><td>2.4 mSv/年</td><td>参考基准</td></tr>
+            <tr><td>国际空间站 (ISS)</td><td>100–320 mSv/年</td><td>地球磁场与大气仍有屏蔽</td></tr>
+            <tr><td>月面未屏蔽（太阳极小）</td><td>330–380 mSv/年</td><td>GCR 为主</td></tr>
+            <tr><td>嫦娥四号 LND 实测</td><td>~500 mSv/年</td><td>带电粒子 + 中子贡献</td></tr>
+            <tr><td>3 m 月壤覆盖</td><td>~50 mSv/年</td><td>辐射工作者限值</td></tr>
+            <tr><td>7 m 月壤覆盖</td><td>~5 mSv/年</td><td>接近地球背景</td></tr>
+            <tr><td>水平熔岩管内部</td><td><1 mSv/年</td><td>天然屏蔽最佳</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="data-table-card">
+        <h3>🌑 月壤工程性质</h3>
+        <table class="data-table">
+          <thead><tr><th>参数</th><th>数值</th><th>备注</th></tr></thead>
+          <tbody>
+            <tr><td>表层密度</td><td>1.3–1.5 g/cm³</td><td>随深度增加</td></tr>
+            <tr><td>>3 m 深层密度</td><td>~1.92 g/cm³</td><td>渐近值</td></tr>
+            <tr><td>孔隙率 (0–30 cm)</td><td>~49%</td><td>颗粒间 + 颗粒内孔隙</td></tr>
+            <tr><td>中值粒径</td><td>~0.07 mm</td><td>类似细面粉</td></tr>
+            <tr><td>极限承载力</td><td>~6,000 kPa</td><td>可支撑大多数结构</td></tr>
+            <tr><td>导热系数</td><td>~0.1 W/m/K</td><td>优异隔热体</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="data-table-card">
+        <h3>⚡ 能源系统对比</h3>
+        <table class="data-table">
+          <thead><tr><th>方案</th><th>功率/特性</th><th>质量</th><th>备注</th></tr></thead>
+          <tbody>
+            <tr><td>NASA FSP</td><td>40 kWe / 10 年</td><td>~6,000 kg</td><td>月夜连续运行的门槛技术</td></tr>
+            <tr><td>中俄 Selena（估算）</td><td>5–68 kWe</td><td>~1,300 kg（未确认）</td><td>铅铋冷却</td></tr>
+            <tr><td>太阳能+RFC（40 kWe）</td><td>40 kWe 连续</td><td>~14,500 kg 储能</td><td>依赖日照窗口</td></tr>
+            <tr><td>太阳能+锂电（40 kWe）</td><td>40 kWe 连续</td><td>~30,000 kg 储能</td><td>质量不可行</td></tr>
+            <tr><td>三结 GaAs 刚性板</td><td>70 W/kg</td><td>—</td><td>效率 ~27%</td></tr>
+            <tr><td>薄膜太阳能（CIGS）</td><td>275 W/kg（预计）</td><td>—</td><td>效率较低</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="data-table-card">
+        <h3>💧 水冰与 ISRU</h3>
+        <table class="data-table">
+          <thead><tr><th>项目</th><th>数值</th><th>备注</th></tr></thead>
+          <tbody>
+            <tr><td>南极已识别水冰储量</td><td>~7.35 亿吨</td><td>中置信度</td></tr>
+            <tr><td>Cabeus 总储量</td><td>~1.63 亿吨</td><td>LCROSS 原位确认</td></tr>
+            <tr><td>LCROSS 实测含冰</td><td>5.6±2.9 wt%</td><td>月球最高置信度数据</td></tr>
+            <tr><td>热升华提取能耗</td><td>2.3–2.6 kWh/kg 水</td><td>主流方案</td></tr>
+            <tr><td>PVEx 提取效率</td><td>65%（平均）</td><td>TRL 4–6</td></tr>
+            <tr><td>水电解能耗</td><td>10–15 kWh/kg H₂+O₂</td><td>60–80% 效率</td></tr>
+            <tr><td>月壤含氧</td><td>42–45%</td><td>质量比</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="data-table-card">
+        <h3>🏗️ 选址关键参数</h3>
+        <table class="data-table">
+          <thead><tr><th>地点</th><th>平均光照</th><th>最长阴影</th><th>水冰估算</th><th>坡度</th></tr></thead>
+          <tbody>
+            <tr><td>Connecting Ridge C1-0</td><td>88%</td><td>112 h</td><td>邻近 PSR</td><td><10°</td></tr>
+            <tr><td>Shackleton rim</td><td>85.5%</td><td>65 h</td><td>~2% 表面霜</td><td>>30°（内壁）</td></tr>
+            <tr><td>Malapert summit</td><td>82–93%</td><td>—</td><td>需远程运输</td><td>6–30°</td></tr>
+            <tr><td>de Gerlache rim</td><td>84%</td><td>—</td><td>~300 万吨</td><td>~5°</td></tr>
+            <tr><td>Cabeus (PSR)</td><td>—</td><td>永久</td><td>~1.63 亿吨</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="data-source">
+      <p>数据来源：NASA LRO/LOLA/LAMP/Diviner、CNSA 嫦娥工程、ESA、JAXA、同行评审文献（Gläser et al. 2020; Colaprete et al. 2010; Matthiä & Berger 2024 等）。</p>
     </div>
   </section>
 
@@ -50,43 +149,6 @@
     <p>© 2026 WEISUANDI · weisuandi.com · 月球基地畅想项目</p>
   </footer>
 
-  <script>
-    (function() {
-      const statNumbers = document.querySelectorAll('.stat-number');
-      const statFluctuates = document.querySelectorAll('[data-fluctuate]');
-      let intervalId = null;
-
-      function updateStats() {
-        statNumbers.forEach((el, idx) => {
-          const base = parseFloat(el.dataset.base);
-          const step = parseFloat(el.dataset.step);
-          if (step === 0) {
-            statFluctuates[idx].textContent = '稳定周期';
-            return;
-          }
-          const change = (Math.random() - 0.5) * step * 2;
-          const value = base + change;
-          el.textContent = value.toFixed(value < 10 && step < 0.1 ? 3 : 1);
-          const sign = change >= 0 ? '+' : '';
-          statFluctuates[idx].textContent = `${sign}${change.toFixed(step < 0.01 ? 4 : 2)} 实时波动`;
-        });
-      }
-
-      intervalId = setInterval(updateStats, 2000);
-      updateStats();
-
-      // 注册清理函数（导航离开时由 navigator.js 调用）
-      window.__pageModules = window.__pageModules || {};
-      window.__pageModules["data"] = {
-        cleanup: function() {
-          if (intervalId) {
-            clearInterval(intervalId);
-            intervalId = null;
-          }
-        }
-      };
-    })();
-  </script>
   <script src="scripts/navigator.js"></script>
   <script src="scripts/music-player.js"></script>
 </body>

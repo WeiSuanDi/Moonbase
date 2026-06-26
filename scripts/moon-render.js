@@ -9,13 +9,61 @@ export const bases = [
     id: 'shackleton',
     name: '沙克尔顿基地',
     subtitle: '极地科研前哨',
-    desc: '位于月球南极沙克尔顿陨石坑边缘，这里是太阳系中最具价值的深空门户。永久阴影区富含水冰，可为基地提供饮用水、氧气和火箭燃料，支撑人类向火星及更远深空进发。',
-    lat: -89.5,
-    lon: 0,
+    desc: '位于月球南极沙克尔顿陨石坑边缘，坑缘几乎全年有光照，坑底永久阴影区富含水冰。光照与水冰的“黄金组合”，但极端低温与险峻地形代价高昂。',
+    lat: -89.67,
+    lon: 129.78,
     altitude: '+4,200 m',
     type: '永久驻留站',
     selectable: true,
-    tone: 0x00d4ff
+    tone: 0x00d4ff,
+    illumination: 86,
+    iceWt: 2.0,
+    slope: 15
+  },
+  {
+    id: 'connecting_ridge',
+    name: '连接岭 C1-0',
+    subtitle: '南极综合最优选址',
+    desc: '连接 Shackleton 与 de Gerlache 的山脊。平均光照率 88%，最长连续阴影仅 112 小时，且距离最近 PSR 仅 100 米。太阳能与水冰提取可步行共存。',
+    lat: -88.5,
+    lon: 0,
+    altitude: '+3,800 m',
+    type: '综合最优站',
+    selectable: true,
+    tone: 0x00ffaa,
+    illumination: 88,
+    iceWt: 1.5,
+    slope: 7
+  },
+  {
+    id: 'cabeus',
+    name: '卡比厄斯基地',
+    subtitle: '富冰永久阴影区',
+    desc: 'LCROSS 撞击实验直接测得羽流含水量 5.6±2.9 wt%，总水冰储量约 1.63 亿吨，是月球水冰原位确认置信度最高的地点。但位于永久阴影区内，无日照。',
+    lat: -85.3,
+    lon: -41.8,
+    altitude: '-4,000 m',
+    type: '资源开采站',
+    selectable: true,
+    tone: 0x44aaff,
+    illumination: 0,
+    iceWt: 5.6,
+    slope: 5
+  },
+  {
+    id: 'marius_lava_tube',
+    name: '马里乌斯熔岩管',
+    subtitle: '天然地下庇护所',
+    desc: '天窗直径约 58 米，GRAIL 估计下方存在长 60 公里、宽 9 公里的空腔。天然辐射屏蔽与热稳定性使其成为改变游戏规则的选址，但水冰稀缺。',
+    lat: 14.3,
+    lon: -56.5,
+    altitude: '-300 m',
+    type: '地下栖息地',
+    selectable: true,
+    tone: 0xff66cc,
+    illumination: 50,
+    iceWt: 0.1,
+    slope: 3
   },
   {
     id: 'tranquility',
@@ -27,7 +75,10 @@ export const bases = [
     altitude: '-1,800 m',
     type: '文化旅游港',
     selectable: true,
-    tone: 0xe0e0e0
+    tone: 0xe0e0e0,
+    illumination: 50,
+    iceWt: 0,
+    slope: 2
   },
   {
     id: 'imbrium',
@@ -39,7 +90,10 @@ export const bases = [
     altitude: '-2,500 m',
     type: '工业采矿区',
     selectable: true,
-    tone: 0xffaa55
+    tone: 0xffaa55,
+    illumination: 50,
+    iceWt: 0.2,
+    slope: 4
   },
   {
     id: 'tycho',
@@ -51,12 +105,17 @@ export const bases = [
     altitude: '+2,000 m',
     type: '科研观测站',
     selectable: true,
-    tone: 0xc9a0ff
+    tone: 0xc9a0ff,
+    illumination: 50,
+    iceWt: 0.1,
+    slope: 12
   }
 ];
 
 let scene, camera, renderer, controls, composer, moon, markerGroup, glow, stars, earth;
 let selectedMarker = null;
+let overlayGroup = null;
+let siteBeam = null;
 const markers = [];
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
@@ -238,6 +297,10 @@ export function initMoon() {
   });
   stars = new THREE.Points(starGeometry, starMaterial);
   scene.add(stars);
+
+  // Overlays for decisions
+  overlayGroup = new THREE.Group();
+  scene.add(overlayGroup);
 
   // Markers
   markerGroup = new THREE.Group();
@@ -447,6 +510,133 @@ function latLonToVector3(lat, lon, radius) {
   return new THREE.Vector3(x, y, z);
 }
 
+// --- Site-specific overlays ---
+
+const decisionColors = {
+  energy: { nuclear: 0xffd700, solar: 0xffaa00, storage: 0x88ccff },
+  water: { isru: 0x00aaff, earth: 0x888888, recycle: 0x00ffaa },
+  radiation: { regolith: 0x8b4513, cave: 0x9932cc, hull: 0xaaaaaa },
+  communication: { laser: 0xff0044, relay: 0x44ff44, direct: 0xeeeeee },
+  habitat: { farm: 0x00ff66, supply: 0xffcc00, algae: 0x66ffcc },
+  transport: { hopper: 0xff6600, mass: 0x0066ff, cable: 0xffcc66 }
+};
+
+function disposeObject(obj) {
+  if (obj.geometry) obj.geometry.dispose();
+  if (obj.material) {
+    if (Array.isArray(obj.material)) {
+      obj.material.forEach(m => disposeMaterial(m));
+    } else {
+      disposeMaterial(obj.material);
+    }
+  }
+}
+
+function createSiteBeam(base) {
+  const illumination = base.illumination ?? 50;
+  const height = 0.12 + (illumination / 100) * 0.55;
+  const geometry = new THREE.CylinderGeometry(0.012, 0.035, height, 16, 1, true);
+  geometry.translate(0, height / 2, 0);
+  const material = new THREE.MeshBasicMaterial({
+    color: base.tone,
+    transparent: true,
+    opacity: 0.35,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide
+  });
+  const beam = new THREE.Mesh(geometry, material);
+  beam.userData = { type: 'siteBeam' };
+  return beam;
+}
+
+function createDecisionRing(radius, color, segments = 48) {
+  const geometry = new THREE.TorusGeometry(radius, 0.006, 8, segments);
+  const material = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  const ring = new THREE.Mesh(geometry, material);
+  ring.userData = { type: 'decisionRing' };
+  ring.renderOrder = 10;
+  return ring;
+}
+
+function alignOverlayToSurface(overlay, lat, lon, surfaceRadius) {
+  const pos = latLonToVector3(lat, lon, surfaceRadius);
+  const normal = pos.clone().normalize();
+  overlay.position.copy(pos);
+  overlay.lookAt(pos.clone().add(normal));
+  overlay.rotateX(Math.PI / 2);
+}
+
+function updateSiteBeam(siteId) {
+  if (!overlayGroup || !siteId) {
+    if (siteBeam) {
+      disposeObject(siteBeam);
+      overlayGroup?.remove(siteBeam);
+      siteBeam = null;
+    }
+    return;
+  }
+  const base = bases.find(b => b.id === siteId);
+  if (!base) return;
+
+  if (siteBeam) {
+    disposeObject(siteBeam);
+    overlayGroup.remove(siteBeam);
+  }
+  siteBeam = createSiteBeam(base);
+  alignOverlayToSurface(siteBeam, base.lat, base.lon, 1.03);
+  overlayGroup.add(siteBeam);
+}
+
+export function updateDecisionOverlays(state) {
+  if (!overlayGroup) return;
+
+  // 清除旧的决策环
+  const toRemove = [];
+  overlayGroup.children.forEach(child => {
+    if (child.userData.type === 'decisionRing') {
+      toRemove.push(child);
+    }
+  });
+  toRemove.forEach(child => {
+    disposeObject(child);
+    overlayGroup.remove(child);
+  });
+
+  const siteId = state?.site;
+  if (!siteId) return;
+  const base = bases.find(b => b.id === siteId);
+  if (!base) return;
+
+  const pos = latLonToVector3(base.lat, base.lon, 1.03);
+  const normal = pos.clone().normalize();
+
+  let ringIndex = 0;
+  const ringConfigs = [
+    { key: 'energy', radius: 0.14 },
+    { key: 'water', radius: 0.19 },
+    { key: 'radiation', radius: 0.24 }
+  ];
+
+  ringConfigs.forEach(({ key, radius }) => {
+    const choice = state[key];
+    if (!choice) return;
+    const color = decisionColors[key]?.[choice] ?? 0xffffff;
+    const ringPos = pos.clone().add(normal.clone().multiplyScalar(0.04 + ringIndex * 0.012));
+    const ring = createDecisionRing(radius, color);
+    ring.position.copy(ringPos);
+    ring.lookAt(ringPos.clone().add(normal));
+    overlayGroup.add(ring);
+    ringIndex += 1;
+  });
+}
+
 export function highlightSite(siteId) {
   if (!markerGroup || !markerGroup.children) return;
 
@@ -475,4 +665,6 @@ export function highlightSite(siteId) {
       }
     }
   });
+
+  updateSiteBeam(siteId);
 }
