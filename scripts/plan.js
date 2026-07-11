@@ -17,33 +17,25 @@ import { bases, highlightSite, updateDecisionOverlays } from './moon-render.js';
 import { askAgent, generateSummary, compareBases, generateStory, generatePoster, suggestNext } from './agent-client.js';
 
 // DOM refs（每次 init 时重新查询）
-let infoPanel, siteInfoContent, infoSubtitle, infoTitle, infoTags, infoDesc, infoStats, infoActions, noSiteEl;
-let progressPipeline, gamePanel, gameSiteTag, decisionList, statsBoard, generateBtn, agentActions, suggestBtn;
+let planTopBar, topbarSite, progressPipeline, topbarStats;
+let planStage, completedSummary, decisionCardWrapper;
 let resultPanel, resultTitle, resultBody, resultClose, resultReset;
 let agentFab, agentChat, chatClose, chatMessages, chatInput, chatSend, chatChips;
 
 let isGenerating = false;
 let unsubscribe = null;
+let currentCardStepKey = null;
+let isAnimating = false;
 
 function queryDom() {
-  infoPanel = document.getElementById('info-panel');
-  siteInfoContent = document.getElementById('site-info-content');
-  infoSubtitle = document.getElementById('info-subtitle');
-  infoTitle = document.getElementById('info-title');
-  infoTags = document.getElementById('info-tags');
-  infoDesc = document.getElementById('info-desc');
-  infoStats = document.getElementById('info-stats');
-  infoActions = document.getElementById('info-actions');
-  noSiteEl = document.getElementById('no-site');
-
+  planTopBar = document.getElementById('plan-top-bar');
+  topbarSite = document.getElementById('topbar-site');
   progressPipeline = document.getElementById('progress-pipeline');
-  gamePanel = document.getElementById('game-panel');
-  gameSiteTag = document.getElementById('game-site-tag');
-  decisionList = document.getElementById('decision-list');
-  statsBoard = document.getElementById('stats-board');
-  generateBtn = document.getElementById('generate-summary-btn');
-  agentActions = document.getElementById('agent-actions');
-  suggestBtn = document.getElementById('suggest-btn');
+  topbarStats = document.getElementById('topbar-stats');
+
+  planStage = document.getElementById('plan-stage');
+  completedSummary = document.getElementById('completed-summary');
+  decisionCardWrapper = document.getElementById('decision-card-wrapper');
 
   resultPanel = document.getElementById('result-panel');
   resultTitle = document.getElementById('result-title');
@@ -105,30 +97,24 @@ function onSuggestNextClick() { onSuggestNext(); }
 function bindEvents() {
   if (resultClose) resultClose.addEventListener('click', hideResult);
   if (resultReset) resultReset.addEventListener('click', onResultReset);
-  if (generateBtn) generateBtn.addEventListener('click', onRunAgentSummary);
-  if (suggestBtn) suggestBtn.addEventListener('click', onSuggestNextClick);
   if (agentFab) agentFab.addEventListener('click', onAgentFabClick);
   if (chatClose) chatClose.addEventListener('click', onChatCloseClick);
   if (chatSend) chatSend.addEventListener('click', onChatSendClick);
   if (chatInput) chatInput.addEventListener('keydown', onChatInputKeydown);
-  if (agentActions) agentActions.addEventListener('click', onAgentActionsClick);
   if (chatChips) chatChips.addEventListener('click', onChatChipsClick);
 }
 
 function unbindEvents() {
   if (resultClose) resultClose.removeEventListener('click', hideResult);
   if (resultReset) resultReset.removeEventListener('click', onResultReset);
-  if (generateBtn) generateBtn.removeEventListener('click', onRunAgentSummary);
-  if (suggestBtn) suggestBtn.removeEventListener('click', onSuggestNextClick);
   if (agentFab) agentFab.removeEventListener('click', onAgentFabClick);
   if (chatClose) chatClose.removeEventListener('click', onChatCloseClick);
   if (chatSend) chatSend.removeEventListener('click', onChatSendClick);
   if (chatInput) chatInput.removeEventListener('keydown', onChatInputKeydown);
-  if (agentActions) agentActions.removeEventListener('click', onAgentActionsClick);
   if (chatChips) chatChips.removeEventListener('click', onChatChipsClick);
 }
 
-// —— 核心逻辑（保持不变，但使用 queryDom 后的引用） ——
+// —— 核心逻辑 ——
 
 function init() {
   queryDom();
@@ -138,8 +124,6 @@ function init() {
   const state = getState();
   render(state);
   if (state.site) {
-    const base = bases.find(b => b.id === state.site);
-    if (base) showBaseInfo(base);
     if (highlightSite) highlightSite(state.site);
     if (updateDecisionOverlays) updateDecisionOverlays(state);
   }
@@ -152,13 +136,14 @@ function cleanup() {
     unsubscribe = null;
   }
   isGenerating = false;
+  currentCardStepKey = null;
+  isAnimating = false;
 }
 
 // 注册页面生命周期（由 navigator.js 通过 window.__pageModules 调用）
 window.__pageModules = window.__pageModules || {};
 window.__pageModules["plan"] = { init: init, cleanup: cleanup };
 
-// 优先使用 URL 参数中的选址；其次保留已有 state；否则提示返回首页
 function resolveSiteFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const siteFromUrl = params.get('site');
@@ -167,137 +152,102 @@ function resolveSiteFromUrl() {
   }
 }
 
-function showBaseInfo(base) {
-  if (!infoSubtitle) return;
-  const meta = siteMeta[base.id];
-  infoSubtitle.textContent = base.subtitle;
-  infoTitle.textContent = base.name;
-  infoDesc.textContent = base.desc;
+function getActiveStepIndex(state) {
+  if (!state.site) return -1;
+  return steps.findIndex(s => !state[s.key]);
+}
 
-  // Render tags
-  if (infoTags && meta?.tags) {
-    infoTags.innerHTML = meta.tags.map(t => `<span class="info-tag">${t}</span>`).join('');
-  } else if (infoTags) {
-    infoTags.innerHTML = '';
+function getStepStatus(state, step, index) {
+  const prev = steps[index - 1];
+  const isUnlocked = !prev || state[prev.key];
+  const isDone = !!state[step.key];
+  const isActive = isUnlocked && !isDone;
+  return { isUnlocked, isDone, isActive };
+}
+
+function render(state) {
+  renderTopBar(state);
+  renderStage(state);
+  if (updateDecisionOverlays) updateDecisionOverlays(state);
+}
+
+// —— Top Bar ——
+
+function renderTopBar(state) {
+  renderTopBarSite(state);
+  renderProgressPipeline(state);
+  renderTopBarStats(state);
+}
+
+function renderTopBarSite(state) {
+  if (!topbarSite) return;
+  if (!state.site) {
+    topbarSite.innerHTML = `<div class="topbar-site-placeholder">尚未选择基地</div>`;
+    return;
   }
+
+  const base = bases.find(b => b.id === state.site);
+  const meta = siteMeta[state.site];
+  if (!base) return;
 
   const iceDisplay = meta?.iceAvailable_t >= 1000000
     ? (meta.iceAvailable_t / 1000000).toFixed(2) + 'M'
     : meta?.iceAvailable_t >= 1000
       ? (meta.iceAvailable_t / 1000).toFixed(1) + 'k'
-      : meta?.iceAvailable_t;
+      : meta?.iceAvailable_t || '—';
 
-  infoStats.innerHTML = `
-    <div class="info-stat"><div class="info-stat-value">${base.lat}°</div><div class="info-stat-label">纬度</div></div>
-    <div class="info-stat"><div class="info-stat-value">${base.lon}°</div><div class="info-stat-label">经度</div></div>
-    <div class="info-stat"><div class="info-stat-value">${getSiteDifficulty(base.id)}</div><div class="info-stat-label">建设难度</div></div>
-    <div class="info-stat"><div class="info-stat-value">${meta?.sunHoursRatio ? Math.round(meta.sunHoursRatio * 100) + '%' : '-'}</div><div class="info-stat-label">日照比</div></div>
-    <div class="info-stat"><div class="info-stat-value">${meta?.longestShadow_h === 9999 ? '永久阴影' : meta?.longestShadow_h + ' h'}</div><div class="info-stat-label">最长阴影</div></div>
-    <div class="info-stat"><div class="info-stat-value">${iceDisplay} t</div><div class="info-stat-label">可用水冰</div></div>
+  topbarSite.innerHTML = `
+    <div class="topbar-site-name">${base.name}</div>
+    <div class="topbar-site-sub">${base.subtitle}</div>
+    <div class="topbar-site-tags">
+      ${meta?.tags?.map(t => `<span class="topbar-site-tag">${t}</span>`).join('') || ''}
+    </div>
+    <div class="topbar-site-mini">
+      <div class="mini-stat"><span>${meta?.sunHoursRatio ? Math.round(meta.sunHoursRatio * 100) + '%' : '—'}</span><span>日照</span></div>
+      <div class="mini-stat"><span>${meta?.longestShadow_h === 9999 ? '永久' : meta?.longestShadow_h + 'h'}</span><span>阴影</span></div>
+      <div class="mini-stat"><span>${iceDisplay}t</span><span>水冰</span></div>
+    </div>
   `;
-
-  // Reference & ice concentration block
-  const extraInfo = document.createElement('div');
-  extraInfo.className = 'info-extra';
-  extraInfo.innerHTML = `
-    <div class="info-extra-row"><span class="info-extra-label">水冰浓度</span><span class="info-extra-value">${meta?.iceConcentration || '—'}</span></div>
-    <div class="info-extra-row"><span class="info-extra-label">置信度</span><span class="info-extra-value">${meta?.iceConfidence || '—'}</span></div>
-    <div class="info-extra-row"><span class="info-extra-label">坡度</span><span class="info-extra-value">${meta?.slope_deg != null ? meta.slope_deg + '°' : '—'}</span></div>
-    <div class="info-extra-row"><span class="info-extra-label">参考来源</span><span class="info-extra-value">${meta?.reference || '—'}</span></div>
-  `;
-
-  // Replace any previous extra info
-  const existingExtra = siteInfoContent?.querySelector('.info-extra');
-  if (existingExtra) existingExtra.remove();
-  if (siteInfoContent) siteInfoContent.insertBefore(extraInfo, infoActions);
-
-  infoActions.innerHTML = '';
-  if (base.selectable) {
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-primary';
-    btn.textContent = '重新推演该基地';
-    btn.addEventListener('click', () => {
-      setSite(base.id);
-    });
-    infoActions.appendChild(btn);
-  }
 }
 
-function render(state) {
-  if (!gamePanel) return;
-  const hasSite = !!state.site;
-
-  if (hasSite) {
-    gamePanel.classList.remove('hidden');
-    if (siteInfoContent) siteInfoContent.style.display = '';
-    if (noSiteEl) noSiteEl.style.display = 'none';
-    renderGamePanel(state);
-    renderProgressPipeline(state);
-  } else {
-    gamePanel.classList.add('hidden');
-    if (siteInfoContent) siteInfoContent.style.display = 'none';
-    if (noSiteEl) noSiteEl.style.display = 'block';
-    renderProgressPipeline(state);
-  }
-
+function renderTopBarStats(state) {
+  if (!topbarStats) return;
   const metrics = computeMetrics(state);
-  if (metrics) {
-    statsBoard.classList.remove('hidden');
-    renderStats(metrics, state);
-  } else {
-    statsBoard.classList.add('hidden');
+  if (!metrics || !state.site) {
+    topbarStats.innerHTML = `<div class="topbar-stats-placeholder">选择基地后开始推演</div>`;
+    return;
   }
 
-  const complete = isDecisionComplete(state);
-  if (generateBtn) generateBtn.style.display = complete ? 'block' : 'none';
-  if (agentActions) agentActions.style.display = complete ? 'grid' : 'none';
-  if (suggestBtn) suggestBtn.style.display = hasSite && !complete ? 'inline-flex' : 'none';
+  const viabilityClass = metrics.viabilityScore >= 70 ? 'good' : metrics.viabilityScore >= 45 ? 'warn' : 'bad';
+  const powerClass = metrics.powerSurplus_kW >= 30 ? 'good' : metrics.powerSurplus_kW >= 0 ? 'warn' : 'bad';
+  const radiationClass = metrics.radiation_mSv_y <= 100 ? 'good' : metrics.radiation_mSv_y <= 200 ? 'warn' : 'bad';
+  const waterClass = metrics.waterSupply_t_y >= 500 ? 'good' : metrics.waterSupply_t_y >= 200 ? 'warn' : 'bad';
 
-  if (updateDecisionOverlays) updateDecisionOverlays(state);
-}
-
-function renderGamePanel(state) {
-  if (!decisionList) return;
-  const site = siteMeta[state.site];
-  const completed = getCompletedSteps(state);
-  gameSiteTag.innerHTML = `<span class="dot"></span> 已选选址：${site?.name || state.site} <span class="progress-tag">${completed}/${steps.length}</span>`;
-
-  decisionList.innerHTML = '';
-  steps.forEach((step, index) => {
-    const prev = steps[index - 1];
-    const isUnlocked = !prev || state[prev.key];
-    const isDone = !!state[step.key];
-    const isActive = isUnlocked && !isDone;
-
-    const card = document.createElement('div');
-    card.className = `decision-card ${isActive ? 'active' : ''} ${isDone ? 'done' : ''} ${!isUnlocked ? 'locked' : ''}`;
-
-    const statusText = isDone ? '已选择' : isUnlocked ? '待决策' : '需先完成上一步';
-    const statusClass = isDone ? 'done' : '';
-
-    card.innerHTML = `
-      <div class="decision-header">
-        <div class="decision-name">${index + 1}. ${step.name}</div>
-        <div class="decision-status ${statusClass}">${statusText}</div>
+  topbarStats.innerHTML = `
+    <div class="topbar-stats-main">
+      <div class="topbar-viability ${viabilityClass}">
+        <span class="topbar-viability-value">${metrics.viabilityScore}</span>
+        <span class="topbar-viability-label">可行性</span>
       </div>
-      <div class="decision-desc">${step.description}</div>
-      <div class="option-list" id="options-${step.key}"></div>
-    `;
-
-    const optionList = card.querySelector(`#options-${step.key}`);
-    options[step.key].forEach(opt => {
-      const btn = document.createElement('button');
-      btn.className = 'option-btn';
-      if (state[step.key] === opt.id) btn.classList.add('selected');
-      btn.disabled = !isUnlocked;
-      btn.innerHTML = `<span class="option-title">${opt.icon} ${opt.label}</span><span class="option-hint">${opt.hint}</span>`;
-      btn.addEventListener('click', () => setDecision(step.key, opt.id));
-      optionList.appendChild(btn);
-    });
-
-    decisionList.appendChild(card);
-  });
+      <div class="topbar-mini-metrics">
+        <div class="topbar-mini-metric">
+          <span class="mini-metric-label">能源</span>
+          <span class="mini-metric-value ${powerClass}">${metrics.powerSurplus_kW > 0 ? '+' : ''}${metrics.powerSurplus_kW} kW</span>
+        </div>
+        <div class="topbar-mini-metric">
+          <span class="mini-metric-label">水源</span>
+          <span class="mini-metric-value ${waterClass}">${metrics.waterSupply_t_y} t/年</span>
+        </div>
+        <div class="topbar-mini-metric">
+          <span class="mini-metric-label">辐射</span>
+          <span class="mini-metric-value ${radiationClass}">${metrics.radiation_mSv_y} mSv</span>
+        </div>
+      </div>
+    </div>
+  `;
 }
+
+// —— Progress Pipeline ——
 
 function renderProgressPipeline(state) {
   if (!progressPipeline) return;
@@ -307,10 +257,7 @@ function renderProgressPipeline(state) {
 
   let html = '';
   steps.forEach((step, i) => {
-    const isDone = !!state[step.key];
-    const prev = steps[i - 1];
-    const isUnlocked = hasSite && (!prev || !!state[prev.key]);
-    const isActive = isUnlocked && !isDone;
+    const { isDone, isActive } = getStepStatus(state, step, i);
 
     let statusClass = 'locked';
     if (isDone) statusClass = 'done';
@@ -334,90 +281,222 @@ function renderProgressPipeline(state) {
 
   progressPipeline.innerHTML = html;
 
-  // Click handlers on pipeline nodes
   progressPipeline.querySelectorAll('.pipeline-node').forEach(node => {
     node.addEventListener('click', () => {
       const stepKey = node.dataset.step;
-      if (!stepKey) return;
+      if (!stepKey || isAnimating) return;
       const currentState = getState();
       const stepIndex = steps.findIndex(s => s.key === stepKey);
       const prev = steps[stepIndex - 1];
       const isUnlocked = !!currentState.site && (!prev || !!currentState[prev.key]);
       if (!isUnlocked) return;
-      // Scroll to the corresponding decision card
-      const card = decisionList?.querySelector(`#options-${stepKey}`)?.closest('.decision-card');
-      if (card) {
-        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        // Brief highlight
-        card.style.boxShadow = '0 0 30px rgba(0,212,255,0.2)';
-        setTimeout(() => { card.style.boxShadow = ''; }, 800);
-      }
+      goToStep(stepKey, stepIndex < getActiveStepIndex(currentState) ? 1 : -1);
     });
   });
 }
 
-function renderStats(metrics, state) {
-  if (!statsBoard) return;
-  const viabilityClass = metrics.viabilityScore >= 70 ? 'good' : metrics.viabilityScore >= 45 ? 'warn' : 'bad';
-  const powerClass = metrics.powerSurplus_kW >= 30 ? 'good' : metrics.powerSurplus_kW >= 0 ? 'warn' : 'bad';
-  const radiationClass = metrics.radiation_mSv_y <= 100 ? 'good' : metrics.radiation_mSv_y <= 200 ? 'warn' : 'bad';
-  const waterClass = metrics.waterSupply_t_y >= 500 ? 'good' : metrics.waterSupply_t_y >= 200 ? 'warn' : 'bad';
-  const riskClass = metrics.riskScore <= 6 ? 'good' : metrics.riskScore <= 10 ? 'warn' : 'bad';
-  const sustainClass = metrics.sustainability >= 18 ? 'good' : metrics.sustainability >= 12 ? 'warn' : 'bad';
+// —— Stage / Single Card ——
 
-  // Bar widths (percentage-based on max values)
-  const viabilityPct = metrics.viabilityScore;
-  const powerPct = Math.min(100, Math.max(0, (metrics.powerSurplus_kW + 30) / 130 * 100));
-  const radiationPct = Math.min(100, Math.max(0, (400 - metrics.radiation_mSv_y) / 380 * 100));
-  const waterPct = Math.min(100, Math.max(0, metrics.waterSupply_t_y / 1200 * 100));
-  const commPct = Math.min(100, Math.max(0, metrics.commScore));
-  const foodPct = metrics.foodSelfSufficiency;
-  const transportPct = Math.min(100, Math.max(0, metrics.transportCapacity));
-  const riskPct = Math.min(100, Math.max(0, (18 - metrics.riskScore) / 18 * 100));
-  const sustainPct = Math.min(100, Math.max(0, metrics.sustainability / 30 * 100));
+function renderStage(state) {
+  if (!planStage) return;
 
-  statsBoard.innerHTML = `
-    <h3>📊 实时推演仪表盘</h3>
+  if (!state.site) {
+    renderNoSite();
+    return;
+  }
 
-    <div class="stats-highlight">
-      <div class="highlight-value ${viabilityClass}">${metrics.viabilityScore}<span style="font-size:1rem;">/100</span></div>
-      <div class="highlight-label">综合可行性评分</div>
-    </div>
+  renderCompletedSummary(state);
 
-    <div class="stats-metric-group">
-      <div class="stats-group-title">🛡️ 生存指标</div>
-      ${metricRow('年辐射剂量', metrics.radiation_mSv_y, 'mSv', radiationPct, radiationClass, true)}
-      ${metricRow('年供水量', metrics.waterSupply_t_y, 't/年', waterPct, waterClass, false)}
-      ${metricRow('食品自给率', metrics.foodSelfSufficiency, '%', foodPct, 'good', false)}
-    </div>
+  const activeIndex = getActiveStepIndex(state);
 
-    <div class="stats-metric-group">
-      <div class="stats-group-title">⚡ 运营指标</div>
-      ${metricRow('能源结余', metrics.powerSurplus_kW, 'kW', powerPct, powerClass, false)}
-      ${metricRow('通信评分', metrics.commScore, '', commPct, 'good', false)}
-      ${metricRow('运输能力', metrics.transportCapacity, '', transportPct, 'good', false)}
-    </div>
+  if (activeIndex === -1) {
+    renderCompletionCard(state);
+    return;
+  }
 
-    <div class="stats-metric-group">
-      <div class="stats-group-title">⚠️ 风险指标</div>
-      ${metricRow('综合风险', 18 - metrics.riskScore, '/18', riskPct, riskClass, true)}
-      ${metricRow('可持续评分', metrics.sustainability, '/30', sustainPct, sustainClass, false)}
-      ${metricRow('总部署质量', metrics.totalMass_t, 't', 50, 'good', false)}
-    </div>
-  `;
+  const activeStep = steps[activeIndex];
+  const desiredCardKey = activeStep.key;
+
+  if (currentCardStepKey !== desiredCardKey && !isAnimating) {
+    const direction = (currentCardStepKey && steps.findIndex(s => s.key === currentCardStepKey) < activeIndex) ? 1 : -1;
+    switchCard(() => renderActiveCard(state, activeStep), direction);
+  } else if (!isAnimating) {
+    renderActiveCard(state, activeStep);
+  }
 }
 
-function metricRow(label, value, unit, pct, cls, lowerBetter) {
-  const displayVal = unit ? `${value} ${unit}` : `${value}`;
-  const barCls = cls || 'good';
-  return `
-    <div class="metric-row">
-      <span class="metric-label">${label}</span>
-      <div class="metric-bar-wrap"><div class="metric-bar-fill ${barCls}" style="width:${pct}%"></div></div>
-      <span class="metric-value ${barCls}">${displayVal}</span>
+function renderNoSite() {
+  if (completedSummary) completedSummary.innerHTML = '';
+  currentCardStepKey = null;
+  if (decisionCardWrapper) {
+    decisionCardWrapper.innerHTML = `
+      <div class="decision-card-placeholder">
+        <h2>基地沙盘推演</h2>
+        <p>为选定的月面基地完成 6 项核心决策，即可解锁 AI 深度产出。</p>
+        <a href="index.html" class="btn btn-primary">返回首页选择基地</a>
+      </div>
+    `;
+  }
+}
+
+function renderCompletedSummary(state) {
+  if (!completedSummary) return;
+  const chips = [];
+  steps.forEach((step, index) => {
+    const choiceId = state[step.key];
+    if (!choiceId) return;
+    const choice = options[step.key].find(o => o.id === choiceId);
+    if (!choice) return;
+    chips.push(`
+      <button class="completed-chip" data-step="${step.key}" title="点击修改">
+        <span class="completed-chip-step">${index + 1}</span>
+        <span class="completed-chip-icon">${choice.icon}</span>
+        <span class="completed-chip-label">${choice.label}</span>
+      </button>
+    `);
+  });
+
+  completedSummary.innerHTML = chips.length
+    ? `<div class="completed-chips">${chips.join('')}</div>`
+    : '';
+
+  completedSummary.querySelectorAll('.completed-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      if (isAnimating) return;
+      const stepKey = chip.dataset.step;
+      const stepIndex = steps.findIndex(s => s.key === stepKey);
+      const activeIndex = getActiveStepIndex(getState());
+      const direction = stepIndex < activeIndex ? 1 : -1;
+      goToStep(stepKey, direction);
+    });
+  });
+}
+
+function renderActiveCard(state, step) {
+  if (!decisionCardWrapper) return;
+  currentCardStepKey = step.key;
+
+  const stepIndex = steps.findIndex(s => s.key === step.key);
+  const isFirst = stepIndex === 0;
+  const isLast = stepIndex === steps.length - 1;
+
+  const card = document.createElement('div');
+  card.className = 'decision-card decision-card-single active';
+
+  card.innerHTML = `
+    <div class="decision-step-number">步骤 ${stepIndex + 1} / ${steps.length}</div>
+    <div class="decision-header">
+      <div class="decision-name">${step.name}</div>
+    </div>
+    <div class="decision-desc">${step.description}</div>
+    <div class="option-list" id="options-${step.key}"></div>
+    <div class="decision-card-actions">
+      ${!isFirst ? `<button class="btn btn-ghost card-back-btn" data-back>← 上一步</button>` : '<span></span>'}
+      ${!isLast ? `<span class="decision-hint">选择一项以继续</span>` : `<span class="decision-hint">选择最后一项完成推演</span>`}
     </div>
   `;
+
+  const optionList = card.querySelector(`#options-${step.key}`);
+  options[step.key].forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'option-btn';
+    btn.innerHTML = `<span class="option-title">${opt.icon} ${opt.label}</span><span class="option-hint">${opt.hint}</span>`;
+    btn.addEventListener('click', () => {
+      if (isAnimating) return;
+      setDecision(step.key, opt.id);
+    });
+    optionList.appendChild(btn);
+  });
+
+  const backBtn = card.querySelector('[data-back]');
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      if (isAnimating) return;
+      const prevStep = steps[stepIndex - 1];
+      if (prevStep) goToStep(prevStep.key, 1);
+    });
+  }
+
+  decisionCardWrapper.innerHTML = '';
+  decisionCardWrapper.appendChild(card);
 }
+
+function renderCompletionCard(state) {
+  if (!decisionCardWrapper) return;
+  currentCardStepKey = '__complete__';
+
+  const metrics = computeMetrics(state);
+  const viabilityClass = metrics && metrics.viabilityScore >= 70 ? 'good' : metrics && metrics.viabilityScore >= 45 ? 'warn' : 'bad';
+
+  decisionCardWrapper.innerHTML = `
+    <div class="decision-card decision-card-single completion-card">
+      <div class="completion-icon">🎉</div>
+      <h2 class="completion-title">推演完成</h2>
+      <p class="completion-desc">你已完成全部 6 项核心决策，综合可行性评分为 <strong class="${viabilityClass}">${metrics?.viabilityScore ?? '—'}/100</strong>。</p>
+      <div class="completion-actions">
+        <button class="btn btn-primary" id="generate-summary-btn">📊 生成可行性简报</button>
+        <button class="btn btn-secondary" data-output="compare">⚖️ 多基地对比</button>
+        <button class="btn btn-secondary" data-output="story">📖 基地一日</button>
+        <button class="btn btn-secondary" data-output="poster">🚀 招募海报</button>
+      </div>
+      <button class="btn btn-ghost" id="completion-reset-btn" style="margin-top:1rem;width:100%;">重新推演</button>
+    </div>
+  `;
+
+  document.getElementById('generate-summary-btn')?.addEventListener('click', onRunAgentSummary);
+  decisionCardWrapper.querySelectorAll('[data-output]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const type = btn.dataset.output;
+      if (type) runAgentOutput(type);
+    });
+  });
+  document.getElementById('completion-reset-btn')?.addEventListener('click', onResultReset);
+}
+
+function goToStep(stepKey, direction = 1) {
+  const state = getState();
+  const step = steps.find(s => s.key === stepKey);
+  if (!step) return;
+  switchCard(() => renderActiveCard(state, step), direction);
+}
+
+function switchCard(renderFn, direction = 1) {
+  if (isAnimating || !decisionCardWrapper) return;
+  isAnimating = true;
+
+  const current = decisionCardWrapper.querySelector('.decision-card-single');
+  if (!current) {
+    renderFn();
+    isAnimating = false;
+    return;
+  }
+
+  current.classList.add('card-exit');
+  current.classList.add(direction > 0 ? 'exit-left' : 'exit-right');
+
+  requestAnimationFrame(() => {
+    current.classList.add('card-exit-active');
+
+    setTimeout(() => {
+      renderFn();
+      const next = decisionCardWrapper.querySelector('.decision-card-single');
+      if (next) {
+        next.classList.add('card-enter', direction > 0 ? 'enter-right' : 'enter-left');
+        requestAnimationFrame(() => {
+          next.classList.add('card-enter-active');
+          setTimeout(() => {
+            next.classList.remove('card-enter', 'card-enter-active', 'enter-right', 'enter-left');
+            isAnimating = false;
+          }, 350);
+        });
+      } else {
+        isAnimating = false;
+      }
+    }, 300);
+  });
+}
+
+// —— Agent Outputs ——
 
 const OUTPUT_TITLES = {
   summary: '基地可行性简报',
@@ -429,9 +508,13 @@ const OUTPUT_TITLES = {
 async function runAgentOutput(type) {
   if (isGenerating) return;
   isGenerating = true;
-  const originalText = generateBtn.textContent;
-  generateBtn.disabled = true;
-  generateBtn.textContent = 'AI 思考中…';
+
+  const btn = document.getElementById('generate-summary-btn');
+  const originalText = btn?.textContent || '生成';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'AI 思考中…';
+  }
 
   const state = getState();
   const metrics = computeMetrics(state);
@@ -460,8 +543,10 @@ async function runAgentOutput(type) {
     }
   } finally {
     isGenerating = false;
-    generateBtn.disabled = false;
-    generateBtn.textContent = originalText;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
   }
 }
 

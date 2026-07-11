@@ -2260,3 +2260,562 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
     font-size: 1rem;
   }
 }
+
+/* ============================================================
+   Plan Page: Single Card Stage Layout
+   ============================================================ */
+
+.page-plan {
+  padding-top: 0;
+  min-height: 100vh;
+}
+
+/* Sticky top bar */
+.plan-top-bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: grid;
+  grid-template-columns: 240px 1fr 280px;
+  gap: 1.5rem;
+  align-items: center;
+  padding: 0.9rem 3vw;
+  background: rgba(8, 8, 10, 0.82);
+  border-bottom: 1px solid rgba(0, 212, 255, 0.12);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Site info in top bar */
+.topbar-site {
+  min-width: 0;
+}
+
+.topbar-site-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--lunar-white);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-site-sub {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.topbar-site-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.topbar-site-tag {
+  font-size: 0.6rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(0, 212, 255, 0.08);
+  border: 1px solid rgba(0, 212, 255, 0.18);
+  color: var(--cyan);
+  white-space: nowrap;
+}
+
+.topbar-site-mini {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.mini-stat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mini-stat span:first-child {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--lunar-white);
+}
+
+.mini-stat span:last-child {
+  font-size: 0.58rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.topbar-site-placeholder,
+.topbar-stats-placeholder {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+  padding: 0.5rem;
+}
+
+/* Progress in top bar */
+.topbar-progress {
+  min-width: 0;
+}
+
+.topbar-progress .progress-pipeline {
+  padding: 0;
+  margin: 0;
+  max-width: none;
+}
+
+/* Stats in top bar */
+.topbar-stats {
+  min-width: 0;
+}
+
+.topbar-stats-main {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.topbar-viability {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  padding: 0.3rem 0.6rem;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.topbar-viability.good { border-color: rgba(126,231,135,0.35); background: rgba(126,231,135,0.08); }
+.topbar-viability.warn { border-color: rgba(250,204,21,0.35); background: rgba(250,204,21,0.08); }
+.topbar-viability.bad { border-color: rgba(248,113,113,0.35); background: rgba(248,113,113,0.08); }
+
+.topbar-viability-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.topbar-viability-label {
+  font-size: 0.6rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.topbar-mini-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.topbar-mini-metric {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.74rem;
+}
+
+.mini-metric-label {
+  color: var(--muted);
+}
+
+.mini-metric-value {
+  font-weight: 600;
+  color: var(--lunar-white);
+}
+
+.mini-metric-value.good { color: var(--success); }
+.mini-metric-value.warn { color: #facc15; }
+.mini-metric-value.bad { color: var(--danger); }
+
+/* Stage */
+.plan-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 110px);
+  padding: 2rem 4vw 4rem;
+}
+
+.stage-inner {
+  width: 100%;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+}
+
+/* Completed summary chips */
+.completed-summary {
+  width: 100%;
+  min-height: 2.4rem;
+}
+
+.completed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.completed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(126, 231, 135, 0.08);
+  border: 1px solid rgba(126, 231, 135, 0.22);
+  color: var(--lunar-white);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: transform 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+.completed-chip:hover {
+  transform: translateY(-2px);
+  background: rgba(126, 231, 135, 0.14);
+  box-shadow: 0 4px 14px rgba(126, 231, 135, 0.12);
+}
+
+.completed-chip-step {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(126, 231, 135, 0.2);
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--success);
+}
+
+.completed-chip-icon {
+  font-size: 0.85rem;
+}
+
+/* Card wrapper */
+.decision-card-wrapper {
+  width: 100%;
+  position: relative;
+  min-height: 360px;
+}
+
+/* Single decision card */
+.decision-card-single {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding: 2rem 2.2rem;
+  border-radius: 18px;
+  border: 1px solid rgba(0, 212, 255, 0.18);
+  background: rgba(14, 14, 16, 0.92);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.4), 0 0 40px rgba(0,212,255,0.06);
+  will-change: transform, opacity;
+}
+
+.decision-card-single::before,
+.decision-card-single::after {
+  display: none;
+}
+
+.decision-card-single .decision-step-number {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--cyan);
+  margin-bottom: 0.5rem;
+}
+
+.decision-card-single .decision-header {
+  margin-bottom: 0.6rem;
+}
+
+.decision-card-single .decision-name {
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.decision-card-single .decision-desc {
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: var(--muted);
+  margin-bottom: 1.4rem;
+}
+
+.decision-card-single .option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.decision-card-single .option-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 1rem 1.2rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.03);
+  color: var(--lunar-white);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.25s, background 0.25s, transform 0.2s, box-shadow 0.25s;
+}
+
+.decision-card-single .option-btn:hover {
+  border-color: rgba(0, 212, 255, 0.35);
+  background: rgba(0, 212, 255, 0.06);
+  transform: translateX(4px);
+  box-shadow: 0 4px 20px rgba(0,212,255,0.08);
+}
+
+.decision-card-single .option-title {
+  font-weight: 600;
+  font-size: 0.98rem;
+  flex: 0 0 auto;
+}
+
+.decision-card-single .option-hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  flex: 1;
+  line-height: 1.5;
+}
+
+.decision-card-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1.5rem;
+  min-height: 2.5rem;
+}
+
+.card-back-btn {
+  padding: 0.5rem 0.9rem;
+  font-size: 0.8rem;
+}
+
+.decision-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Completion card */
+.completion-card {
+  text-align: center;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  border-color: rgba(126, 231, 135, 0.2);
+  background: rgba(14, 14, 16, 0.95);
+}
+
+.completion-card::before,
+.completion-card::after {
+  display: none;
+}
+
+.completion-icon {
+  font-size: 3rem;
+  margin-bottom: 0.5rem;
+}
+
+.completion-title {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-bottom: 0.6rem;
+}
+
+.completion-desc {
+  font-size: 0.95rem;
+  color: var(--muted);
+  line-height: 1.7;
+  margin-bottom: 1.8rem;
+}
+
+.completion-desc strong {
+  font-size: 1.2rem;
+}
+
+.completion-desc strong.good { color: var(--success); }
+.completion-desc strong.warn { color: #facc15; }
+.completion-desc strong.bad { color: var(--danger); }
+
+.completion-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+
+.completion-card #completion-reset-btn {
+  border-color: rgba(255,255,255,0.18);
+  color: var(--lunar-white);
+  background: rgba(255,255,255,0.06);
+}
+
+.completion-card #completion-reset-btn:hover {
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.3);
+}
+
+/* Placeholder when no site */
+.decision-card-placeholder {
+  text-align: center;
+  padding: 3rem 2rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(14, 14, 16, 0.7);
+}
+
+.decision-card-placeholder h2 {
+  font-size: 1.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.decision-card-placeholder p {
+  color: var(--muted);
+  margin-bottom: 1.5rem;
+}
+
+/* Card transitions */
+.card-enter {
+  opacity: 0;
+}
+
+.card-enter.enter-right {
+  transform: translateX(60px);
+}
+
+.card-enter.enter-left {
+  transform: translateX(-60px);
+}
+
+.card-enter-active {
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-exit {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.card-exit.exit-left {
+  transform: translateX(0);
+}
+
+.card-exit.exit-right {
+  transform: translateX(0);
+}
+
+.card-exit-active.exit-left {
+  opacity: 0;
+  transform: translateX(-60px);
+}
+
+.card-exit-active.exit-right {
+  opacity: 0;
+  transform: translateX(60px);
+}
+
+.card-exit-active {
+  transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Responsive */
+@media (max-width: 1100px) {
+  .plan-top-bar {
+    grid-template-columns: 1fr;
+    gap: 0.8rem;
+    padding: 0.8rem 4vw;
+  }
+
+  .topbar-site {
+    text-align: center;
+  }
+
+  .topbar-site-tags,
+  .topbar-site-mini {
+    justify-content: center;
+  }
+
+  .topbar-stats-main {
+    justify-content: center;
+  }
+
+  .plan-stage {
+    min-height: calc(100vh - 240px);
+    padding: 1.5rem 4vw 3rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .plan-top-bar {
+    gap: 0.6rem;
+    padding: 0.7rem 3vw;
+  }
+
+  .topbar-progress .pipeline-label {
+    display: none;
+  }
+
+  .topbar-progress .pipeline-dot {
+    width: 30px;
+    height: 30px;
+    font-size: 0.75rem;
+  }
+
+  .topbar-progress .pipeline-connector {
+    flex: 0 0 16px;
+  }
+
+  .topbar-stats-main {
+    flex-direction: row;
+    gap: 0.8rem;
+  }
+
+  .topbar-mini-metrics {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.3rem 1rem;
+  }
+
+  .plan-stage {
+    min-height: calc(100vh - 200px);
+  }
+
+  .decision-card-single {
+    padding: 1.4rem 1.3rem;
+  }
+
+  .decision-card-single .decision-name {
+    font-size: 1.2rem;
+  }
+
+  .decision-card-single .option-btn {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
+    padding: 0.85rem 1rem;
+  }
+
+  .completion-actions {
+    grid-template-columns: 1fr;
+  }
+}
