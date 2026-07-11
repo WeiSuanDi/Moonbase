@@ -22,8 +22,17 @@
     </ul>
   </nav>
 
-  <!-- Top Bar: sticky header with site info + progress + stats -->
-  <header class="plan-top-bar" id="plan-top-bar">
+  <!-- Header: 保留原有横幅风格 -->
+  <header class="plan-header">
+    <div class="plan-header-content">
+      <h1>基地沙盘推演</h1>
+      <p>为选定的月面基地完成 6 项核心决策，即可解锁 AI 深度产出。</p>
+      <a href="index.html" class="btn btn-ghost plan-back-home">← 返回首页</a>
+    </div>
+  </header>
+
+  <!-- Top Bar: 进度条 + 仪表盘，滚动后吸顶 -->
+  <div class="plan-top-bar" id="plan-top-bar">
     <div class="topbar-site" id="topbar-site">
       <div class="topbar-site-placeholder">尚未选择基地</div>
     </div>
@@ -35,7 +44,7 @@
     <div class="topbar-stats" id="topbar-stats">
       <div class="topbar-stats-placeholder">选择基地后开始推演</div>
     </div>
-  </header>
+  </div>
 
   <!-- Main Stage: single decision card -->
   <main class="plan-stage" id="plan-stage">

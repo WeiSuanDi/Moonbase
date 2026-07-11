@@ -1340,10 +1340,24 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
 
 .plan-header {
   position: relative;
-  padding: 8rem 4vw 3rem;
+  padding: 5rem 4vw 2.5rem;
   text-align: center;
   background: radial-gradient(ellipse at 50% 20%, rgba(0,212,255,0.06) 0%, rgba(26,26,28,0.3) 50%, transparent 80%);
   overflow: hidden;
+}
+
+.plan-header-content {
+  position: relative;
+  z-index: 2;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.plan-back-home {
+  display: inline-flex;
+  margin-top: 1.2rem;
+  padding: 0.55rem 1.1rem;
+  font-size: 0.85rem;
 }
 
 .plan-header::before {
@@ -2266,15 +2280,15 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
    ============================================================ */
 
 .page-plan {
-  padding-top: 0;
+  padding-top: 60px; /* 为固定导航栏留空间 */
   min-height: 100vh;
 }
 
 /* Sticky top bar */
 .plan-top-bar {
   position: sticky;
-  top: 0;
-  z-index: 100;
+  top: 60px; /* 吸在固定导航栏下方 */
+  z-index: 99;
   display: grid;
   grid-template-columns: 240px 1fr 280px;
   gap: 1.5rem;
@@ -2441,7 +2455,7 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: calc(100vh - 110px);
+  min-height: calc(100vh - 360px);
   padding: 2rem 4vw 4rem;
 }
 
@@ -2508,7 +2522,7 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
 .decision-card-wrapper {
   width: 100%;
   position: relative;
-  min-height: 360px;
+  min-height: 460px;
 }
 
 /* Single decision card */
@@ -2692,50 +2706,45 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
   margin-bottom: 1.5rem;
 }
 
-/* Card transitions */
-.card-enter {
+/* Card animations: 双卡片同时存在，使用 keyframes 减少卡顿 */
+.card-initial {
   opacity: 0;
 }
 
 .card-enter.enter-right {
-  transform: translateX(60px);
+  animation: cardEnterRight 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .card-enter.enter-left {
-  transform: translateX(-60px);
-}
-
-.card-enter-active {
-  opacity: 1;
-  transform: translateX(0);
-  transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.card-exit {
-  opacity: 1;
-  transform: translateX(0);
+  animation: cardEnterLeft 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .card-exit.exit-left {
-  transform: translateX(0);
+  animation: cardExitLeft 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .card-exit.exit-right {
-  transform: translateX(0);
+  animation: cardExitRight 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
-.card-exit-active.exit-left {
-  opacity: 0;
-  transform: translateX(-60px);
+@keyframes cardEnterRight {
+  from { opacity: 0; transform: translateX(60px) scale(0.98); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
 }
 
-.card-exit-active.exit-right {
-  opacity: 0;
-  transform: translateX(60px);
+@keyframes cardEnterLeft {
+  from { opacity: 0; transform: translateX(-60px) scale(0.98); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
 }
 
-.card-exit-active {
-  transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+@keyframes cardExitLeft {
+  from { opacity: 1; transform: translateX(0) scale(1); }
+  to { opacity: 0; transform: translateX(-60px) scale(0.98); }
+}
+
+@keyframes cardExitRight {
+  from { opacity: 1; transform: translateX(0) scale(1); }
+  to { opacity: 0; transform: translateX(60px) scale(0.98); }
 }
 
 /* Responsive */
@@ -2760,9 +2769,13 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
   }
 
   .plan-stage {
-    min-height: calc(100vh - 240px);
+    min-height: calc(100vh - 320px);
     padding: 1.5rem 4vw 3rem;
   }
+}
+
+.page-plan nav {
+  z-index: 101;
 }
 
 @media (max-width: 768px) {
@@ -2797,7 +2810,7 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
   }
 
   .plan-stage {
-    min-height: calc(100vh - 200px);
+    min-height: calc(100vh - 280px);
   }
 
   .decision-card-single {

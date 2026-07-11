@@ -26,6 +26,7 @@ let isGenerating = false;
 let unsubscribe = null;
 let currentCardStepKey = null;
 let isAnimating = false;
+let pendingSwitch = null;
 
 function queryDom() {
   planTopBar = document.getElementById('plan-top-bar');
@@ -300,43 +301,48 @@ function renderProgressPipeline(state) {
 function renderStage(state) {
   if (!planStage) return;
 
+  renderCompletedSummary(state);
+
   if (!state.site) {
     renderNoSite();
     return;
   }
 
-  renderCompletedSummary(state);
-
   const activeIndex = getActiveStepIndex(state);
 
   if (activeIndex === -1) {
-    renderCompletionCard(state);
+    switchToCard('__complete__', () => buildCompletionCard(state));
     return;
   }
 
   const activeStep = steps[activeIndex];
   const desiredCardKey = activeStep.key;
 
-  if (currentCardStepKey !== desiredCardKey && !isAnimating) {
-    const direction = (currentCardStepKey && steps.findIndex(s => s.key === currentCardStepKey) < activeIndex) ? 1 : -1;
-    switchCard(() => renderActiveCard(state, activeStep), direction);
-  } else if (!isAnimating) {
-    renderActiveCard(state, activeStep);
-  }
+  if (currentCardStepKey === desiredCardKey) return;
+
+  const currentIndex = currentCardStepKey
+    ? steps.findIndex(s => s.key === currentCardStepKey)
+    : -1;
+  const direction = currentIndex < activeIndex ? 1 : -1;
+  switchToCard(desiredCardKey, () => buildActiveCard(activeStep), direction);
 }
 
 function renderNoSite() {
   if (completedSummary) completedSummary.innerHTML = '';
-  currentCardStepKey = null;
-  if (decisionCardWrapper) {
-    decisionCardWrapper.innerHTML = `
-      <div class="decision-card-placeholder">
-        <h2>基地沙盘推演</h2>
-        <p>为选定的月面基地完成 6 项核心决策，即可解锁 AI 深度产出。</p>
-        <a href="index.html" class="btn btn-primary">返回首页选择基地</a>
-      </div>
-    `;
-  }
+  switchToCard('__nosite__', () => buildNoSiteCard());
+}
+
+function buildNoSiteCard() {
+  const card = document.createElement('div');
+  card.className = 'decision-card decision-card-single active';
+  card.innerHTML = `
+    <div class="decision-card-placeholder">
+      <h2>基地沙盘推演</h2>
+      <p>为选定的月面基地完成 6 项核心决策，即可解锁 AI 深度产出。</p>
+      <a href="index.html" class="btn btn-primary">返回首页选择基地</a>
+    </div>
+  `;
+  return card;
 }
 
 function renderCompletedSummary(state) {
@@ -372,10 +378,7 @@ function renderCompletedSummary(state) {
   });
 }
 
-function renderActiveCard(state, step) {
-  if (!decisionCardWrapper) return;
-  currentCardStepKey = step.key;
-
+function buildActiveCard(step) {
   const stepIndex = steps.findIndex(s => s.key === step.key);
   const isFirst = stepIndex === 0;
   const isLast = stepIndex === steps.length - 1;
@@ -417,83 +420,94 @@ function renderActiveCard(state, step) {
     });
   }
 
-  decisionCardWrapper.innerHTML = '';
-  decisionCardWrapper.appendChild(card);
+  return card;
 }
 
-function renderCompletionCard(state) {
-  if (!decisionCardWrapper) return;
-  currentCardStepKey = '__complete__';
-
+function buildCompletionCard(state) {
   const metrics = computeMetrics(state);
   const viabilityClass = metrics && metrics.viabilityScore >= 70 ? 'good' : metrics && metrics.viabilityScore >= 45 ? 'warn' : 'bad';
 
-  decisionCardWrapper.innerHTML = `
-    <div class="decision-card decision-card-single completion-card">
-      <div class="completion-icon">🎉</div>
-      <h2 class="completion-title">推演完成</h2>
-      <p class="completion-desc">你已完成全部 6 项核心决策，综合可行性评分为 <strong class="${viabilityClass}">${metrics?.viabilityScore ?? '—'}/100</strong>。</p>
-      <div class="completion-actions">
-        <button class="btn btn-primary" id="generate-summary-btn">📊 生成可行性简报</button>
-        <button class="btn btn-secondary" data-output="compare">⚖️ 多基地对比</button>
-        <button class="btn btn-secondary" data-output="story">📖 基地一日</button>
-        <button class="btn btn-secondary" data-output="poster">🚀 招募海报</button>
-      </div>
-      <button class="btn btn-ghost" id="completion-reset-btn" style="margin-top:1rem;width:100%;">重新推演</button>
+  const card = document.createElement('div');
+  card.className = 'decision-card decision-card-single completion-card active';
+  card.innerHTML = `
+    <div class="completion-icon">🎉</div>
+    <h2 class="completion-title">推演完成</h2>
+    <p class="completion-desc">你已完成全部 6 项核心决策，综合可行性评分为 <strong class="${viabilityClass}">${metrics?.viabilityScore ?? '—'}/100</strong>。</p>
+    <div class="completion-actions">
+      <button class="btn btn-primary" id="generate-summary-btn">📊 生成可行性简报</button>
+      <button class="btn btn-secondary" data-output="compare">⚖️ 多基地对比</button>
+      <button class="btn btn-secondary" data-output="story">📖 基地一日</button>
+      <button class="btn btn-secondary" data-output="poster">🚀 招募海报</button>
     </div>
+    <button class="btn btn-ghost" id="completion-reset-btn" style="margin-top:1rem;width:100%;">重新推演</button>
   `;
 
-  document.getElementById('generate-summary-btn')?.addEventListener('click', onRunAgentSummary);
-  decisionCardWrapper.querySelectorAll('[data-output]').forEach(btn => {
+  card.querySelector('#generate-summary-btn')?.addEventListener('click', onRunAgentSummary);
+  card.querySelectorAll('[data-output]').forEach(btn => {
     btn.addEventListener('click', () => {
       const type = btn.dataset.output;
       if (type) runAgentOutput(type);
     });
   });
-  document.getElementById('completion-reset-btn')?.addEventListener('click', onResultReset);
+  card.querySelector('#completion-reset-btn')?.addEventListener('click', onResultReset);
+
+  return card;
 }
 
 function goToStep(stepKey, direction = 1) {
-  const state = getState();
   const step = steps.find(s => s.key === stepKey);
   if (!step) return;
-  switchCard(() => renderActiveCard(state, step), direction);
+  switchToCard(stepKey, () => buildActiveCard(step), direction);
 }
 
-function switchCard(renderFn, direction = 1) {
-  if (isAnimating || !decisionCardWrapper) return;
-  isAnimating = true;
-
-  const current = decisionCardWrapper.querySelector('.decision-card-single');
-  if (!current) {
-    renderFn();
-    isAnimating = false;
+function switchToCard(key, buildCardFn, direction = 0) {
+  if (!decisionCardWrapper) return;
+  if (isAnimating) {
+    // 等待当前动画结束后再切换（由 animationend 自动触发重渲染）
+    pendingSwitch = { key, buildCardFn, direction };
     return;
   }
 
-  current.classList.add('card-exit');
-  current.classList.add(direction > 0 ? 'exit-left' : 'exit-right');
+  const current = decisionCardWrapper.querySelector('.decision-card-single');
+  const next = buildCardFn();
+  if (!next) return;
 
-  requestAnimationFrame(() => {
-    current.classList.add('card-exit-active');
+  currentCardStepKey = key;
 
-    setTimeout(() => {
-      renderFn();
-      const next = decisionCardWrapper.querySelector('.decision-card-single');
-      if (next) {
-        next.classList.add('card-enter', direction > 0 ? 'enter-right' : 'enter-left');
-        requestAnimationFrame(() => {
-          next.classList.add('card-enter-active');
-          setTimeout(() => {
-            next.classList.remove('card-enter', 'card-enter-active', 'enter-right', 'enter-left');
-            isAnimating = false;
-          }, 350);
-        });
-      } else {
-        isAnimating = false;
-      }
-    }, 300);
-  });
+  if (!current) {
+    decisionCardWrapper.innerHTML = '';
+    decisionCardWrapper.appendChild(next);
+    return;
+  }
+
+  isAnimating = true;
+  next.classList.add('card-initial');
+  decisionCardWrapper.appendChild(next);
+
+  // 强制同步布局，确保下一帧同时开始两个动画
+  void next.offsetWidth;
+
+  const exitClass = direction > 0 ? 'exit-left' : 'exit-right';
+  const enterClass = direction > 0 ? 'enter-right' : 'enter-left';
+
+  current.classList.add('card-exit', exitClass);
+  next.classList.remove('card-initial');
+  next.classList.add('card-enter', enterClass);
+
+  const onNextEnd = (e) => {
+    if (e.target !== next) return;
+    next.removeEventListener('animationend', onNextEnd);
+    current.remove();
+    next.classList.remove('card-enter', enterClass);
+    isAnimating = false;
+    if (pendingSwitch) {
+      const p = pendingSwitch;
+      pendingSwitch = null;
+      switchToCard(p.key, p.buildCardFn, p.direction);
+    }
+  };
+
+  next.addEventListener('animationend', onNextEnd);
 }
 
 // —— Agent Outputs ——
