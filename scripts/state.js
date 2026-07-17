@@ -1,8 +1,11 @@
 // 单一状态源（single source of truth）
+// v3：多基地网络 —— state 重构为 { crew, activeSite, sites, history }，最多 MAX_BASES(3) 个基地，
+//     每个基地独立持有六项决策；computeNetworkMetrics 计算基地间水/电/食物补给链路与网络评分；
+//     自动迁移 v26 及更早的扁平单基地存档；node 环境（无 localStorage）下可安全 import。
 // v2.5：引入 ReferenceMaterials 真实数据校准选址与规则表
 
-const STORAGE_KEY = 'moonBaseState_v26';
-const LEGACY_KEYS = ['moonBaseState_v25', 'moonBaseState_v2', 'moonBaseState_v1'];
+export const STORAGE_KEY = 'moonBaseState_v27';
+export const LEGACY_KEYS = ['moonBaseState_v26', 'moonBaseState_v25', 'moonBaseState_v2', 'moonBaseState_v1'];
 
 // ===== 沙盘扩展参数 =====
 export const CREW_OPTIONS = [4, 12, 50, 100]; // 常驻乘员档位
@@ -339,55 +342,124 @@ export const ruleTable = {
   }
 };
 
-// ===== 状态 =====
+// ===== 状态（v3：多基地网络） =====
+export const MAX_BASES = 3; // 最多可同时规划的基地数量
+
+const DECISION_KEYS = steps.map(s => s.key);
+
+function emptyDecisions() {
+  return {
+    energy: null,
+    water: null,
+    radiation: null,
+    communication: null,
+    habitat: null,
+    transport: null
+  };
+}
+
 const defaultState = {
-  site: null,
-  energy: null,
-  water: null,
-  radiation: null,
-  communication: null,
-  habitat: null,
-  transport: null,
   crew: 12,
+  activeSite: null,
+  sites: {},
   history: []
 };
 
+function normalizeDecisions(raw) {
+  const decisions = emptyDecisions();
+  if (!raw || typeof raw !== 'object') return decisions;
+  DECISION_KEYS.forEach(key => {
+    decisions[key] = typeof raw[key] === 'string' ? raw[key] : null;
+  });
+  return decisions;
+}
+
 function normalizeState(parsed) {
-  if (!parsed) return null;
+  if (!parsed || typeof parsed !== 'object') return null;
+  const sites = {};
+  if (parsed.sites && typeof parsed.sites === 'object') {
+    for (const [siteId, raw] of Object.entries(parsed.sites)) {
+      if (!siteMeta[siteId]) continue; // 丢弃未知选址
+      sites[siteId] = normalizeDecisions(raw);
+    }
+  }
+  let activeSite = typeof parsed.activeSite === 'string' ? parsed.activeSite : null;
+  if (activeSite && !siteMeta[activeSite]) activeSite = null;
+  if (activeSite && !sites[activeSite]) sites[activeSite] = emptyDecisions();
   return {
-    ...defaultState,
-    ...parsed,
     crew: CREW_OPTIONS.includes(parsed.crew) ? parsed.crew : defaultState.crew,
-    history: parsed.history || []
+    activeSite,
+    sites,
+    history: Array.isArray(parsed.history) ? parsed.history : []
+  };
+}
+
+// v26 及更早版本：扁平单基地结构 { site, energy..transport, crew, history }
+function migrateFlatState(old) {
+  if (!old || typeof old !== 'object') return null;
+  const siteId = old.site ?? null;
+  return {
+    crew: old.crew ?? 12,
+    activeSite: siteId,
+    sites: siteId ? { [siteId]: normalizeDecisions(old) } : {},
+    history: Array.isArray(old.history) ? old.history : []
   };
 }
 
 function migrateLegacy(raw) {
   if (!raw) return null;
   try {
-    return normalizeState(JSON.parse(raw));
+    return normalizeState(migrateFlatState(JSON.parse(raw)));
   } catch (e) {
     return null;
   }
 }
 
-function loadFromStorage() {
+// localStorage 统一走 try/catch + typeof 守卫，node 环境（无 localStorage）下可安全 import
+function storageGet(key) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      return normalizeState(JSON.parse(raw));
-    }
-    for (const key of LEGACY_KEYS) {
-      const legacy = localStorage.getItem(key);
-      if (legacy) return migrateLegacy(legacy);
-    }
+    if (typeof localStorage === 'undefined') return null;
+    return localStorage.getItem(key);
   } catch (e) {
-    // 隐私模式可能无法读取
+    return null; // 隐私模式可能无法读取
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(key, value);
+  } catch (e) {
+    // 隐私模式可能无法写入
+  }
+}
+
+function loadFromStorage() {
+  const raw = storageGet(STORAGE_KEY);
+  if (raw) {
+    try {
+      const normalized = normalizeState(JSON.parse(raw));
+      if (normalized) return normalized;
+    } catch (e) {
+      // 存档损坏，继续尝试旧版本
+    }
+  }
+  for (const key of LEGACY_KEYS) {
+    const legacy = storageGet(key);
+    if (legacy) {
+      const migrated = migrateLegacy(legacy);
+      if (migrated) return migrated;
+    }
   }
   return null;
 }
 
-export const baseState = loadFromStorage() || { ...defaultState };
+export const baseState = loadFromStorage() || {
+  crew: defaultState.crew,
+  activeSite: null,
+  sites: {},
+  history: []
+};
 
 const listeners = new Set();
 
@@ -398,27 +470,80 @@ export function subscribe(fn) {
 }
 
 function persist() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(baseState));
-  } catch (e) {
-    // 隐私模式可能无法写入
-  }
+  storageSet(STORAGE_KEY, JSON.stringify(baseState));
 }
 
+function notify() {
+  persist();
+  const snapshot = getState();
+  listeners.forEach(fn => fn(snapshot));
+}
+
+export function getState() {
+  const sites = {};
+  for (const [siteId, decisions] of Object.entries(baseState.sites)) {
+    sites[siteId] = { ...decisions };
+  }
+  return {
+    crew: baseState.crew,
+    activeSite: baseState.activeSite,
+    sites,
+    history: [...baseState.history]
+  };
+}
+
+// 读取某基地的 decisions 对象；无记录时返回六项全 null 的新对象
+export function getSiteDecisions(state, siteId) {
+  const decisions = state?.sites?.[siteId];
+  return decisions ? { ...decisions } : emptyDecisions();
+}
+
+// 已规划基地的 siteId 数组（按加入顺序）
+export function getPlannedSites(state) {
+  return Object.keys(state?.sites || {});
+}
+
+export function setActiveSite(siteId) {
+  if (!siteMeta[siteId]) return; // siteMeta 中不存在则忽略
+  if (baseState.activeSite === siteId) return;
+  if (!baseState.sites[siteId]) {
+    if (Object.keys(baseState.sites).length >= MAX_BASES) return; // 达到基地数量上限
+    baseState.sites[siteId] = emptyDecisions();
+  }
+  baseState.activeSite = siteId;
+  notify();
+}
+
+// 向后兼容：setSite 保留为 setActiveSite 的别名
 export function setSite(siteId) {
-  if (baseState.site === siteId) return;
-  baseState.site = siteId;
-  steps.forEach(s => { baseState[s.key] = null; });
-  baseState.history = [{ step: 'site', choice: siteId, label: siteMeta[siteId]?.name || siteId, time: Date.now() }];
+  setActiveSite(siteId);
+}
+
+export function removeSite(siteId) {
+  if (!baseState.sites[siteId]) return;
+  delete baseState.sites[siteId];
+  if (baseState.activeSite === siteId) {
+    baseState.activeSite = Object.keys(baseState.sites)[0] || null;
+  }
   notify();
 }
 
 export function setDecision(stepKey, optionId) {
-  if (baseState[stepKey] === optionId) return;
-  baseState[stepKey] = optionId;
+  if (!baseState.activeSite) return; // 无 activeSite 时 no-op
+  if (!options[stepKey]) return;
+  const decisions = baseState.sites[baseState.activeSite];
+  if (!decisions) return;
+  if (decisions[stepKey] === optionId) return;
+  decisions[stepKey] = optionId;
   const opt = options[stepKey].find(o => o.id === optionId);
-  baseState.history = baseState.history.filter(h => h.step !== stepKey);
-  baseState.history.push({ step: stepKey, choice: optionId, label: opt?.label || optionId, time: Date.now() });
+  baseState.history = baseState.history.filter(h => !(h.step === stepKey && h.siteId === baseState.activeSite));
+  baseState.history.push({
+    step: stepKey,
+    choice: optionId,
+    label: opt?.label || optionId,
+    siteId: baseState.activeSite,
+    time: Date.now()
+  });
   notify();
 }
 
@@ -429,43 +554,27 @@ export function setCrew(n) {
 }
 
 export function resetGame() {
-  baseState.site = null;
-  steps.forEach(s => { baseState[s.key] = null; });
+  // crew 是全局任务参数，重置时保留
+  baseState.activeSite = null;
+  baseState.sites = {};
   baseState.history = [];
   notify();
 }
 
-function notify() {
-  persist();
-  const snapshot = getState();
-  listeners.forEach(fn => fn(snapshot));
-}
-
-export function getState() {
-  return {
-    site: baseState.site,
-    energy: baseState.energy,
-    water: baseState.water,
-    radiation: baseState.radiation,
-    communication: baseState.communication,
-    habitat: baseState.habitat,
-    transport: baseState.transport,
-    crew: baseState.crew,
-    history: [...baseState.history]
-  };
-}
-
 // ===== 指标计算 =====
-function getRule(step, choice, siteId) {
-  const baseRule = ruleTable[step]?.[choice];
+// 返回合并 siteModifier 后的规则对象（原内部函数，现导出）
+export function getRule(stepKey, choiceId, siteId) {
+  const baseRule = ruleTable[stepKey]?.[choiceId];
   if (!baseRule) return null;
   const modifier = baseRule.siteModifier?.[siteId] || {};
   return { ...baseRule, ...modifier };
 }
 
-export function computeMetrics(state) {
-  const site = state.site ? siteMeta[state.site] : null;
+// 单基地指标：与 v26 computeMetrics 完全相同的计算逻辑，参数来源改为 (siteId, decisions, crew)
+export function computeSiteMetrics(siteId, decisions, crew) {
+  const site = siteMeta[siteId];
   if (!site) return null;
+  const d = decisions || {};
 
   const deltas = {
     powerBalance_kW: 0,
@@ -482,9 +591,9 @@ export function computeMetrics(state) {
   };
 
   steps.forEach(step => {
-    const choice = state[step.key];
+    const choice = d[step.key];
     if (!choice) return;
-    const rule = getRule(step.key, choice, state.site);
+    const rule = getRule(step.key, choice, siteId);
     if (!rule) return;
 
     if (typeof rule.powerBalance_kW === 'number') deltas.powerBalance_kW += rule.powerBalance_kW;
@@ -501,15 +610,15 @@ export function computeMetrics(state) {
   });
 
   // ===== 乘员需求模型 =====
-  const crew = CREW_OPTIONS.includes(state.crew) ? state.crew : 12;
-  const waterDemand_t_y = crew * 1.2;
-  const powerDemand_kW = crew * 0.8;
+  const crewCount = CREW_OPTIONS.includes(crew) ? crew : 12;
+  const waterDemand_t_y = crewCount * 1.2;
+  const powerDemand_kW = crewCount * 0.8;
   const waterBalance_t_y = deltas.waterSupply_t_y - waterDemand_t_y;
-  const foodSupportRatio = Math.min(1, deltas.foodSelfSufficiency / (crew * 0.9));
+  const foodSupportRatio = Math.min(1, deltas.foodSelfSufficiency / (crewCount * 0.9));
 
   // 乘员生活用电计入总耗电
   const powerSurplus_kW = site.basePower_kW + deltas.powerBalance_kW - deltas.powerConsumption_kW - powerDemand_kW;
-  const radiation_mSv_y = Math.max(5, site.baseRadiation_mSv_y + (ruleTable.radiation[state.radiation]?.radiationDelta_mSv_y || 0));
+  const radiation_mSv_y = Math.max(5, site.baseRadiation_mSv_y + (ruleTable.radiation[d.radiation]?.radiationDelta_mSv_y || 0));
 
   // ===== 发射质量预算 =====
   const totalMass_t = Math.round(deltas.mass_t);
@@ -527,6 +636,7 @@ export function computeMetrics(state) {
   const viabilityScore = Math.max(0, Math.round(powerScore + radiationScore + waterScore + sustainScore - riskPenalty - budgetPenalty));
 
   return {
+    siteId,
     siteName: site.name,
     siteMeta: site,
     powerSurplus_kW: Math.round(powerSurplus_kW),
@@ -540,7 +650,7 @@ export function computeMetrics(state) {
     foodSelfSufficiency: deltas.foodSelfSufficiency,
     transportCapacity: deltas.transportCapacity,
     viabilityScore,
-    crewCount: crew,
+    crewCount,
     waterDemand_t_y: Math.round(waterDemand_t_y * 10) / 10,
     powerDemand_kW: Math.round(powerDemand_kW * 10) / 10,
     waterBalance_t_y: Math.round(waterBalance_t_y),
@@ -553,16 +663,125 @@ export function computeMetrics(state) {
   };
 }
 
+// 当前激活基地的指标；无 activeSite（或选址无效）时返回 null
+export function computeMetrics(state) {
+  if (!state || !state.activeSite) return null;
+  return computeSiteMetrics(state.activeSite, getSiteDecisions(state, state.activeSite), state.crew);
+}
+
+// ===== 网络级指标：多基地补给链路 =====
+export function computeNetworkMetrics(state) {
+  const bases = getPlannedSites(state).map(siteId => {
+    const decisions = getSiteDecisions(state, siteId);
+    return {
+      siteId,
+      name: siteMeta[siteId]?.name || siteId,
+      completed: getCompletedSteps(decisions),
+      metrics: computeSiteMetrics(siteId, decisions, state?.crew)
+    };
+  });
+
+  const planned = bases.filter(b => b.completed >= 1); // 有 ≥1 项决策的基地
+  const operational = planned.filter(b => b.completed >= 4); // 完成 ≥4 项决策的基地
+
+  const avgTransportCapacity = operational.length
+    ? operational.reduce((sum, b) => sum + (b.metrics?.transportCapacity ?? 0), 0) / operational.length
+    : 0;
+  const sharingEnabled = planned.length >= 2 && operational.length >= 2 && avgTransportCapacity >= 40;
+
+  const links = [];
+  let waterShared_t = 0;
+  let powerShared_kW = 0;
+  let foodShared_ratio = 0;
+
+  // 贪心匹配：盈余从大到小 → 赤字从大到小；每对 (from, to, resource) 至多一条 link
+  function matchResource({ donors, receivers, lossRate, resource, unit, amountScale = 1, onLink }) {
+    donors.sort((a, b) => b.avail - a.avail);
+    receivers.sort((a, b) => b.need - a.need);
+    for (const donor of donors) {
+      for (const receiver of receivers) {
+        if (donor.avail <= 0) break;
+        if (receiver.need <= 0) continue;
+        const shipped = Math.min(donor.avail, receiver.need);
+        const arrived = Math.round(shipped * (1 - lossRate) * amountScale);
+        if (arrived <= 0) continue;
+        links.push({ from: donor.siteId, to: receiver.siteId, resource, amount: arrived, unit });
+        donor.avail -= shipped;
+        receiver.need -= shipped * (1 - lossRate); // 赤字按实际到账抵扣
+        onLink(arrived);
+      }
+    }
+  }
+
+  if (sharingEnabled) {
+    // 水：donor waterBalance_t_y > 0 → receiver < 0，传输损耗 20%
+    matchResource({
+      donors: planned.filter(b => (b.metrics?.waterBalance_t_y ?? 0) > 0)
+        .map(b => ({ siteId: b.siteId, avail: b.metrics.waterBalance_t_y })),
+      receivers: planned.filter(b => (b.metrics?.waterBalance_t_y ?? 0) < 0)
+        .map(b => ({ siteId: b.siteId, need: -b.metrics.waterBalance_t_y })),
+      lossRate: 0.2,
+      resource: 'water',
+      unit: 't/年',
+      onLink: arrived => { waterShared_t += arrived; }
+    });
+    // 电：donor 保留 20 kW 自用（surplus > 20）→ receiver 补到 20 kW（surplus < 20），损耗 15%
+    matchResource({
+      donors: planned.filter(b => (b.metrics?.powerSurplus_kW ?? 0) > 20)
+        .map(b => ({ siteId: b.siteId, avail: b.metrics.powerSurplus_kW - 20 })),
+      receivers: planned.filter(b => (b.metrics?.powerSurplus_kW ?? 0) < 20)
+        .map(b => ({ siteId: b.siteId, need: 20 - b.metrics.powerSurplus_kW })),
+      lossRate: 0.15,
+      resource: 'power',
+      unit: 'kW',
+      onLink: arrived => { powerShared_kW += arrived; }
+    });
+    // 食物：无损耗；donor foodSupportRatio >= 1（按未封顶自给率计算可输出富余）→ receiver < 1
+    const uncappedFoodRatio = b => {
+      const m = b.metrics;
+      if (!m) return 0;
+      const demand = (m.crewCount ?? 12) * 0.9;
+      return demand > 0 ? m.foodSelfSufficiency / demand : 0;
+    };
+    matchResource({
+      donors: planned.filter(b => (b.metrics?.foodSupportRatio ?? 0) >= 1)
+        .map(b => ({ siteId: b.siteId, avail: Math.max(0, uncappedFoodRatio(b) - 1) })),
+      receivers: planned.filter(b => (b.metrics?.foodSupportRatio ?? 0) < 1)
+        .map(b => ({ siteId: b.siteId, need: 1 - b.metrics.foodSupportRatio })),
+      lossRate: 0,
+      resource: 'food',
+      unit: '%',
+      amountScale: 100, // 比例 → 需求百分比整数
+      onLink: arrived => { foodShared_ratio += arrived; }
+    });
+  }
+
+  let networkScore = null;
+  if (planned.length >= 2) {
+    const avgViability = planned.reduce((sum, b) => sum + (b.metrics?.viabilityScore ?? 0), 0) / planned.length;
+    const allComplete = planned.every(b => isDecisionComplete(getSiteDecisions(state, b.siteId)));
+    networkScore = Math.min(100, Math.max(0, Math.round(
+      avgViability +
+      Math.min(8, waterShared_t / 40) +
+      Math.min(6, powerShared_kW / 10) +
+      (allComplete ? 4 : 0)
+    )));
+  }
+
+  return { bases, links, sharingEnabled, waterShared_t, powerShared_kW, foodShared_ratio, networkScore };
+}
+
 // ===== 辅助函数 =====
 export function getSiteDifficulty(siteId) {
   const d = siteMeta[siteId]?.difficulty || 2;
   return ['简单', '中等', '困难'][d - 1] || '中等';
 }
 
-export function isDecisionComplete(state) {
-  return steps.every(s => !!state[s.key]);
+// 参数为单个基地的 decisions 对象（非完整 state）
+export function isDecisionComplete(decisions) {
+  return steps.every(s => !!decisions?.[s.key]);
 }
 
-export function getCompletedSteps(state) {
-  return steps.filter(s => !!state[s.key]).length;
+export function getCompletedSteps(decisions) {
+  return steps.filter(s => !!decisions?.[s.key]).length;
 }
