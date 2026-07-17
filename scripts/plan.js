@@ -3,6 +3,7 @@ import {
   subscribe,
   setSite,
   setDecision,
+  setCrew,
   resetGame,
   getState,
   steps,
@@ -11,7 +12,8 @@ import {
   siteMeta,
   getSiteDifficulty,
   isDecisionComplete,
-  getCompletedSteps
+  getCompletedSteps,
+  CREW_OPTIONS
 } from './state.js';
 import { bases, highlightSite, updateDecisionOverlays } from './moon-render.js';
 import { askAgent, generateSummary, compareBases, generateStory, generatePoster, suggestNext } from './agent-client.js';
@@ -27,6 +29,41 @@ let unsubscribe = null;
 let currentCardStepKey = null;
 let isAnimating = false;
 let pendingSwitch = null;
+let prevTopbarMetrics = null;   // 上一次渲染的 topbar 数值（countUp 的 from）
+let wasOverBudget = false;      // 预算「内 → 超」跳变检测
+let completionSoundPlayed = false; // 完成音效只在首次构建时播放
+let prevCompletionScore = 0;    // 完成卡片总分的滚动起点
+
+// —— __moonFx 安全包装（worker 可能不存在，全部可选链 + 降级） ——
+function fxSound(name) {
+  try { window.__moonFx?.sound?.(name); } catch (e) { /* 忽略音效异常 */ }
+}
+
+function fxTilt(el, opts) {
+  try { window.__moonFx?.tilt?.(el, opts); } catch (e) { /* 忽略动效异常 */ }
+}
+
+function countUpOrSet(el, to, opts = {}) {
+  if (!el) return;
+  const fx = window.__moonFx;
+  if (fx && typeof fx.countUp === 'function') {
+    try {
+      fx.countUp(el, to, opts);
+      return;
+    } catch (e) { /* 降级为直接赋值 */ }
+  }
+  el.textContent = typeof opts.format === 'function' ? opts.format(to) : String(to);
+}
+
+// plan.html 只引 main.css，本模块的新样式由这里按需注入
+function ensureSystemsCss() {
+  if (document.querySelector('link[data-ps-css]')) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = 'styles/plan-systems.css';
+  link.dataset.psCss = '1';
+  document.head.appendChild(link);
+}
 
 const MISSION_KEY = 'moonBaseMissionDirective_v1';
 const missionDirectives = {
@@ -135,6 +172,7 @@ function unbindEvents() {
 // —— 核心逻辑 ——
 
 function init() {
+  ensureSystemsCss();
   queryDom();
   resolveSiteFromUrl();
   bindEvents();
@@ -188,6 +226,19 @@ function render(state) {
   renderMissionConsole(state);
   renderStage(state);
   if (updateDecisionOverlays) updateDecisionOverlays(state);
+  checkBudgetTransition(state);
+  if (!(state.site && isDecisionComplete(state))) {
+    completionSoundPlayed = false;
+    prevCompletionScore = 0;
+  }
+}
+
+// 首次从预算内变为超预算时播放错误音
+function checkBudgetTransition(state) {
+  const metrics = computeMetrics(state);
+  const over = !!(metrics && metrics.budgetOver_t > 0);
+  if (over && !wasOverBudget) fxSound('error');
+  wasOverBudget = over;
 }
 
 function renderMissionConsole(state) {
@@ -198,6 +249,7 @@ function renderMissionConsole(state) {
   const completed = getCompletedSteps(state);
   const isPassing = metrics && active.test(metrics);
   const alert = completed < 2 ? null : buildMissionAlert(state, metrics);
+  const crew = CREW_OPTIONS.includes(state.crew) ? state.crew : 12;
 
   missionConsole.innerHTML = `
     <div class="mission-console-inner">
@@ -213,9 +265,24 @@ function renderMissionConsole(state) {
         <small>${state.site ? `${completed} / ${steps.length} 系统已部署 · ${active.brief}` : '三种指令会给出不同的成功判定。'}</small>
       </div>
       ${alert ? `<div class="mission-alert"><span>⚠ ${alert.title}</span><small>${alert.detail}</small></div>` : ''}
+      <div class="ps-console-row">
+        <div class="ps-crew">
+          <span class="ps-crew-label">常驻乘员</span>
+          <div class="ps-seg" role="group" aria-label="常驻乘员规模">
+            ${CREW_OPTIONS.map(n => `<button class="ps-seg-btn ${n === crew ? 'active' : ''}" data-crew="${n}">${n} 人</button>`).join('')}
+          </div>
+          <small class="ps-crew-hint">规模直接推高水 / 电 / 食品需求，越大越难养</small>
+        </div>
+        ${metrics ? `
+        <div class="ps-budget ${metrics.budgetOver_t > 0 ? 'over' : ''}">
+          <div class="ps-budget-head"><span>首年发射质量预算</span><span>${metrics.totalMass_t} / ${metrics.launchBudget_t} t${metrics.budgetOver_t > 0 ? ` · 超 ${metrics.budgetOver_t} t` : ''}</span></div>
+          <div class="ps-budget-track"><div class="ps-budget-fill" style="width:${Math.min(100, Math.round(metrics.budgetUsage * 100))}%"></div></div>
+        </div>` : ''}
+      </div>
     </div>`;
 
   missionConsole.querySelectorAll('[data-directive]').forEach(btn => btn.addEventListener('click', () => setMissionDirective(btn.dataset.directive)));
+  missionConsole.querySelectorAll('[data-crew]').forEach(btn => btn.addEventListener('click', () => setCrew(Number(btn.dataset.crew))));
 }
 
 function buildMissionAlert(state, metrics) {
@@ -269,36 +336,53 @@ function renderTopBarStats(state) {
   const metrics = computeMetrics(state);
   if (!metrics || !state.site) {
     topbarStats.innerHTML = `<div class="topbar-stats-placeholder">选择基地后开始推演</div>`;
+    prevTopbarMetrics = null;
     return;
   }
 
   const viabilityClass = metrics.viabilityScore >= 70 ? 'good' : metrics.viabilityScore >= 45 ? 'warn' : 'bad';
   const powerClass = metrics.powerSurplus_kW >= 30 ? 'good' : metrics.powerSurplus_kW >= 0 ? 'warn' : 'bad';
   const radiationClass = metrics.radiation_mSv_y <= 100 ? 'good' : metrics.radiation_mSv_y <= 200 ? 'warn' : 'bad';
-  const waterClass = metrics.waterSupply_t_y >= 500 ? 'good' : metrics.waterSupply_t_y >= 200 ? 'warn' : 'bad';
+  // 水源改为「供水/需求」展示，赤字（waterBalance < 0）标红
+  const waterClass = metrics.waterBalance_t_y >= 300 ? 'good' : metrics.waterBalance_t_y >= 0 ? 'warn' : 'bad';
 
   topbarStats.innerHTML = `
     <div class="topbar-stats-main">
       <div class="topbar-viability ${viabilityClass}">
-        <span class="topbar-viability-value">${metrics.viabilityScore}</span>
+        <span class="topbar-viability-value" data-count="viability">${metrics.viabilityScore}</span>
         <span class="topbar-viability-label">可行性</span>
       </div>
       <div class="topbar-mini-metrics">
         <div class="topbar-mini-metric">
           <span class="mini-metric-label">能源</span>
-          <span class="mini-metric-value ${powerClass}">${metrics.powerSurplus_kW > 0 ? '+' : ''}${metrics.powerSurplus_kW} kW</span>
+          <span class="mini-metric-value ${powerClass}" data-count="power"></span>
         </div>
         <div class="topbar-mini-metric">
           <span class="mini-metric-label">水源</span>
-          <span class="mini-metric-value ${waterClass}">${metrics.waterSupply_t_y} t/年</span>
+          <span class="mini-metric-value ${waterClass}" data-count="water"></span>
         </div>
         <div class="topbar-mini-metric">
           <span class="mini-metric-label">辐射</span>
-          <span class="mini-metric-value ${radiationClass}">${metrics.radiation_mSv_y} mSv</span>
+          <span class="mini-metric-value ${radiationClass}" data-count="radiation"></span>
         </div>
       </div>
     </div>
   `;
+
+  // 数字滚动：from 取上一次渲染的值，避免每次从 0 开始
+  const prev = prevTopbarMetrics || { viability: 0, power: 0, water: 0, radiation: 0 };
+  const demand = Math.round(metrics.waterDemand_t_y);
+  countUpOrSet(topbarStats.querySelector('[data-count="viability"]'), metrics.viabilityScore, { from: prev.viability, duration: 600, format: v => String(Math.round(v)) });
+  countUpOrSet(topbarStats.querySelector('[data-count="power"]'), metrics.powerSurplus_kW, { from: prev.power, duration: 600, format: v => `${v > 0 ? '+' : ''}${Math.round(v)} kW` });
+  countUpOrSet(topbarStats.querySelector('[data-count="water"]'), metrics.waterSupply_t_y, { from: prev.water, duration: 600, format: v => `${Math.round(v)}/${demand} t/年` });
+  countUpOrSet(topbarStats.querySelector('[data-count="radiation"]'), metrics.radiation_mSv_y, { from: prev.radiation, duration: 600, format: v => `${Math.round(v)} mSv` });
+
+  prevTopbarMetrics = {
+    viability: metrics.viabilityScore,
+    power: metrics.powerSurplus_kW,
+    water: metrics.waterSupply_t_y,
+    radiation: metrics.radiation_mSv_y
+  };
 }
 
 // —— Progress Pipeline ——
@@ -461,10 +545,12 @@ function buildActiveCard(step) {
     btn.addEventListener('click', () => {
       if (isAnimating) return;
       setDecision(step.key, opt.id);
+      if (getState()[step.key] === opt.id) fxSound('select');
     });
     btn.addEventListener('mouseenter', () => renderOutcomePreview(card, step.key, opt.id));
     btn.addEventListener('focus', () => renderOutcomePreview(card, step.key, opt.id));
     optionList.appendChild(btn);
+    fxTilt(btn, { max: 5 });
   });
 
   const backBtn = card.querySelector('[data-back]');
@@ -499,13 +585,31 @@ function buildCompletionCard(state) {
   const directive = missionDirectives[getMissionDirective()];
   const missionPass = metrics && directive.test(metrics);
 
+  // 6 步全部完成、完成卡片首次构建时播放完成音
+  if (!completionSoundPlayed) {
+    completionSoundPlayed = true;
+    fxSound('complete');
+  }
+
   const card = document.createElement('div');
   card.className = 'decision-card decision-card-single completion-card active';
   card.innerHTML = `
     <div class="completion-icon">🎉</div>
     <h2 class="completion-title">推演完成</h2>
-    <p class="completion-desc">你已完成全部 6 项核心决策，综合可行性评分为 <strong class="${viabilityClass}">${metrics?.viabilityScore ?? '—'}/100</strong>。</p>
+    <p class="completion-desc">你已完成全部 6 项核心决策，综合可行性评分为 <strong class="${viabilityClass}" data-ps-score>${metrics?.viabilityScore ?? '—'}/100</strong>。</p>
     <div class="completion-mission ${missionPass ? 'passed' : 'missed'}">${missionPass ? '✓' : '△'} ${directive.icon} ${directive.name}：${missionPass ? '任务达成' : '尚未达成'} <small>${directive.target}</small></div>
+    ${metrics && metrics.budgetOver_t > 0 ? `<div class="ps-budget-warn">⚠ 首年发射质量超出预算 ${metrics.budgetOver_t} t（${metrics.totalMass_t} / ${metrics.launchBudget_t} t），可行性评分已被扣减。</div>` : ''}
+    ${metrics ? `
+    <div class="ps-radar-block">
+      <div class="ps-block-title">六维能力雷达</div>
+      <canvas class="ps-radar" id="ps-radar-canvas"></canvas>
+    </div>` : ''}
+    <div class="ps-event-block">
+      <div class="ps-block-title">任务事件推演</div>
+      <p class="ps-event-hint">从事件牌堆随机抽取 2 张，按你的实际决策即时结算三档结果。</p>
+      <button class="btn btn-secondary ps-roll-btn" id="ps-roll-events">🎲 掷出事件</button>
+      <div class="ps-event-list" id="ps-event-list"></div>
+    </div>
     <div class="completion-actions">
       <button class="btn btn-primary" id="generate-summary-btn">📊 生成可行性简报</button>
       <button class="btn btn-secondary" data-output="compare">⚖️ 多基地对比</button>
@@ -514,6 +618,29 @@ function buildCompletionCard(state) {
     </div>
     <button class="btn btn-ghost" id="completion-reset-btn" style="margin-top:1rem;width:100%;">重新推演</button>
   `;
+
+  // 总分数字滚动（从上一次展示的分值起滚）
+  const scoreEl = card.querySelector('[data-ps-score]');
+  if (scoreEl && metrics) {
+    countUpOrSet(scoreEl, metrics.viabilityScore, {
+      from: prevCompletionScore,
+      duration: 900,
+      format: v => `${Math.round(v)}/100`
+    });
+    prevCompletionScore = metrics.viabilityScore;
+  }
+
+  // 六维雷达图（纯 canvas，无库）
+  const radarCanvas = card.querySelector('#ps-radar-canvas');
+  if (radarCanvas && metrics) drawRadar(radarCanvas, metrics);
+
+  // 任务事件推演：掷出 2 张不重复事件卡
+  const rollBtn = card.querySelector('#ps-roll-events');
+  const eventList = card.querySelector('#ps-event-list');
+  rollBtn?.addEventListener('click', () => {
+    fxSound('confirm');
+    renderEventCards(eventList, getState());
+  });
 
   card.querySelector('#generate-summary-btn')?.addEventListener('click', onRunAgentSummary);
   card.querySelectorAll('[data-output]').forEach(btn => {
@@ -525,6 +652,230 @@ function buildCompletionCard(state) {
   card.querySelector('#completion-reset-btn')?.addEventListener('click', onResultReset);
 
   return card;
+}
+
+// ===== 任务事件推演（本地结算，不调 AI） =====
+// 判定结果三档：0 化解 / 1 受损 / 2 重创
+const EVENT_DECK = [
+  {
+    id: 'spe', icon: '☀️', name: '太阳质子事件（SPE）',
+    brief: '一次强耀斑引发的高能质子流正在扑向月面，全体进入辐射应急程序。',
+    judge(state) {
+      const label = optionLabel('radiation', state.radiation);
+      if (state.radiation === 'cave') return { tier: 0, text: `全员撤入熔岩管深处，「${label}」提供的天然岩层把剂量压到本底水平，任务零损失。` };
+      if (state.radiation === 'regolith') return { tier: 1, text: `「${label}」的月壤覆盖层削弱了大部分质子通量，舱内仍录得短时剂量尖峰，部分舱段临时封闭 36 小时。` };
+      return { tier: 1, text: `「${label}」的风暴掩体只防住了冲击峰值，未轮值乘员全部入掩体避险，舱外作业停摆一周。` };
+    }
+  },
+  {
+    id: 'moonquake', icon: '🌑', name: '浅源月震',
+    brief: '月壳应力释放引发里氏 4 级月震，震中距基地仅 18 km。',
+    judge(state) {
+      const label = optionLabel('radiation', state.radiation);
+      if (state.radiation === 'regolith') return { tier: 0, text: `「${label}」的覆土结构像减震垫一样吸收了应力波，舱体完好，仅货架物品散落。` };
+      if (state.radiation === 'cave') return { tier: 2, text: `「${label}」的结构验证不足的代价显现了：管顶出现剥落碎屑，一支工程队被迫停工评估锚固方案。` };
+      return { tier: 1, text: `「${label}」的刚性舱体把震动直接传导进生活区，连接件松动导致一处气闸报警，抢修 12 小时。` };
+    }
+  },
+  {
+    id: 'supply_delay', icon: '🚀', name: '补给船延期',
+    brief: '地球发射窗口受天气影响，下一班补给船推迟 40 天抵达。',
+    judge(state) {
+      const waterLabel = optionLabel('water', state.water);
+      const foodLabel = optionLabel('habitat', state.habitat);
+      const weakWater = state.water === 'earth_supply';
+      const weakFood = state.habitat === 'earth_food';
+      if (weakWater && weakFood) return { tier: 2, text: `水源与食品同时依赖地球补给（「${waterLabel}」「${foodLabel}」），延期直接触发全站配给制，士气跌至冰点。` };
+      if (weakWater || weakFood) return { tier: 1, text: `「${weakWater ? waterLabel : foodLabel}」依赖地球补给线，延期迫使基地启动定量配给，非必要舱段开始限水限电。` };
+      return { tier: 0, text: `「${waterLabel}」与「${foodLabel}」构成就地闭环，补给船延期只影响备件库存，任务节奏不受干扰。` };
+    }
+  },
+  {
+    id: 'dust', icon: '🌫️', name: '月尘沾染',
+    brief: '一场月尘扰动让静电悬浮的细尘覆盖了基地外露设备。',
+    judge(state) {
+      const label = optionLabel('energy', state.energy);
+      if (state.energy === 'nuclear') return { tier: 0, text: `「${label}」深埋防护且无需采光，月尘对功率输出毫无影响，只需清扫散热器表面。` };
+      if (state.energy === 'storage') return { tier: 1, text: `「${label}」的光伏板被月尘覆盖，充电效率下降约 10%，电解制氢节奏被迫放缓，需派出清扫队。` };
+      return { tier: 1, text: `「${label}」的薄膜阵列被细尘覆盖，功率输出骤降近 20%，月夜前的储能窗口被压缩，基地进入节电模式。` };
+    }
+  },
+  {
+    id: 'equipment_failure', icon: '🔧', name: '关键设备故障',
+    brief: '运输系统主控日志报警：核心部件出现不可忽略的异常磨损。',
+    judge(state) {
+      const label = optionLabel('transport', state.transport);
+      if (state.transport === 'mass_driver') return { tier: 2, text: `「${label}」的主驱动绕组烧毁，这条大宗货运动脉停摆，地面备件不足以就地修复，需等待下一班补给。` };
+      if (state.transport === 'hopper') return { tier: 1, text: `一架「${label}」着陆腿作动器失效，机队其余单元维持运营，但勘探半径被迫收缩一半。` };
+      return { tier: 0, text: `「${label}」结构简单、备件通用，故障驱动轮在 48 小时内完成更换，运输节律很快恢复。` };
+    }
+  },
+  {
+    id: 'psych', icon: '🧠', name: '乘员心理危机',
+    brief: '长期封闭环境的压力开始显现，值班日志记录了多起情绪冲突。',
+    judge(state, metrics) {
+      const commLabel = optionLabel('communication', state.communication);
+      const crew = CREW_OPTIONS.includes(state.crew) ? state.crew : 12;
+      let tier = (metrics?.commScore ?? 0) >= 80 ? 0 : 1;
+      if (crew >= 50) tier += 1;             // 大社区摩擦更多
+      if (state.habitat === 'closed_farm') tier -= 1; // 农场绿意有安抚作用
+      tier = Math.max(0, Math.min(2, tier));
+      const texts = [
+        `${crew} 名乘员依托「${commLabel}」的稳定高带宽链路与地球家人连线，情绪波动在远程心理干预下很快平复。`,
+        `「${commLabel}」的链路时断时续，${crew} 名乘员中开始出现睡眠障碍与摩擦，任务管制中心被迫调整轮班与作息。`,
+        `${crew} 人的封闭社区里矛盾被持续放大，「${commLabel}」无法提供稳定的心理支持通道，一名乘员不得不提前撤离。`
+      ];
+      return { tier, text: texts[tier] };
+    }
+  },
+  {
+    id: 'micrometeorite', icon: '☄️', name: '微陨石撞击',
+    brief: '一颗 2 cm 级微陨石击中基地外围结构，撞击点腾起细小尘雾。',
+    judge(state) {
+      const label = optionLabel('radiation', state.radiation);
+      if (state.radiation === 'cave') return { tier: 0, text: `撞击发生在「${label}」的岩层顶盖上方，天然屏蔽层把冲击完全挡在生活区之外。` };
+      if (state.radiation === 'regolith') return { tier: 0, text: `「${label}」的覆土层同时充当了惠普尔防护屏，微陨石在月壤中解体，舱体零损伤。` };
+      return { tier: 1, text: `「${label}」的舱壁被击穿出一个小孔，舱压报警触发，乘员按预案完成紧急修补，一批外露线缆报废。` };
+    }
+  },
+  {
+    id: 'comm_blackout', icon: '📡', name: '通信中断',
+    brief: '地月链路突然中断，基地与任务管制中心失去联系。',
+    judge(state) {
+      const label = optionLabel('communication', state.communication);
+      if (state.communication === 'relay') return { tier: 0, text: `「${label}」的多跳链路自动切换备份路由，中断仅持续 90 秒，地面甚至没察觉异常。` };
+      if (state.communication === 'laser') return { tier: 1, text: `「${label}」的精密指向机构需要重新捕获目标，链路中断 6 小时，科学数据回传排队积压。` };
+      return { tier: 1, text: `「${label}」的单一直联链路中断后没有备份，基地失联 14 小时，只能按预案自主运行等待窗口。` };
+    }
+  }
+];
+
+function optionLabel(stepKey, choiceId) {
+  return options[stepKey]?.find(o => o.id === choiceId)?.label || '未部署';
+}
+
+function rollEventCards(state) {
+  const pool = [...EVENT_DECK];
+  const picked = [];
+  while (picked.length < 2 && pool.length) {
+    const i = Math.floor(Math.random() * pool.length);
+    picked.push(pool.splice(i, 1)[0]);
+  }
+  return picked;
+}
+
+function renderEventCards(listEl, state) {
+  if (!listEl) return;
+  const metrics = computeMetrics(state);
+  const badges = [
+    '<span class="ps-badge ps-ok">✓ 化解</span>',
+    '<span class="ps-badge ps-hit">△ 受损</span>',
+    '<span class="ps-badge ps-down">✕ 重创</span>'
+  ];
+  listEl.innerHTML = rollEventCards(state).map(ev => {
+    const r = ev.judge(state, metrics);
+    return `
+      <div class="ps-event-card">
+        <div class="ps-event-head"><span class="ps-event-icon">${ev.icon}</span><strong>${ev.name}</strong>${badges[r.tier]}</div>
+        <p class="ps-event-brief">${ev.brief}</p>
+        <p class="ps-event-result">${r.text}</p>
+      </div>`;
+  }).join('');
+}
+
+// ===== 六维能力雷达图（纯 canvas，无库） =====
+function buildRadarAxes(metrics) {
+  const energy = Math.min(100, Math.max(0, metrics.powerSurplus_kW + 30));
+  const water = metrics.waterBalance_t_y < 0 ? 0 : Math.min(100, 30 + Math.min(1, metrics.waterBalance_t_y / 500) * 70);
+  const radiation = Math.min(100, Math.max(0, (400 - metrics.radiation_mSv_y) / 395 * 100));
+  const comm = Math.min(100, Math.max(0, metrics.commScore));
+  const life = Math.min(100, Math.max(0, metrics.foodSupportRatio * 100));
+  const transport = Math.min(100, Math.max(0, metrics.transportCapacity));
+  return [
+    { label: '能源', value: energy },
+    { label: '水源', value: water },
+    { label: '辐射', value: radiation },
+    { label: '通信', value: comm },
+    { label: '生命', value: life },
+    { label: '运输', value: transport }
+  ];
+}
+
+function drawRadar(canvas, metrics) {
+  const size = 300;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.width = size + 'px';
+  canvas.style.height = size + 'px';
+  canvas.width = Math.round(size * dpr);
+  canvas.height = Math.round(size * dpr);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.scale(dpr, dpr);
+
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = size / 2 - 42; // 给轴标签留边
+  const axes = buildRadarAxes(metrics);
+  const n = axes.length;
+  const angleAt = i => -Math.PI / 2 + (Math.PI * 2 * i) / n;
+  const pointAt = (i, r) => [cx + Math.cos(angleAt(i)) * r, cy + Math.sin(angleAt(i)) * r];
+
+  // 网格圈
+  for (let ring = 1; ring <= 4; ring++) {
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const [x, y] = pointAt(i % n, radius * ring / 4);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = 'rgba(120, 180, 255, 0.14)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // 轴线
+  for (let i = 0; i < n; i++) {
+    const [x, y] = pointAt(i, radius);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = 'rgba(120, 180, 255, 0.18)';
+    ctx.stroke();
+  }
+
+  // 数值多边形（半透明填充 + 冷光描边）
+  ctx.beginPath();
+  axes.forEach((a, i) => {
+    const [x, y] = pointAt(i, radius * (a.value / 100));
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(0, 212, 255, 0.16)';
+  ctx.fill();
+  ctx.strokeStyle = '#00d4ff';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = 'rgba(0, 212, 255, 0.55)';
+  ctx.shadowBlur = 12;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // 顶点
+  axes.forEach((a, i) => {
+    const [x, y] = pointAt(i, radius * (a.value / 100));
+    ctx.beginPath();
+    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#8ccaff';
+    ctx.fill();
+  });
+
+  // 轴标签
+  ctx.font = '12px "Exo 2", "Noto Sans SC", sans-serif';
+  ctx.fillStyle = '#9aa0a8';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  axes.forEach((a, i) => {
+    const [x, y] = pointAt(i, radius + 20);
+    ctx.fillText(a.label, x, y);
+  });
 }
 
 function goToStep(stepKey, direction = 1) {
@@ -666,12 +1017,15 @@ function buildLocalSummary(state, metrics) {
     ``,
     `## 关键指标`,
     `- 综合可行性：${metrics.viabilityScore}/100`,
-    `- 能源结余：${metrics.powerSurplus_kW > 0 ? '+' : ''}${metrics.powerSurplus_kW} kW`,
+    `- 常驻乘员：${metrics.crewCount} 人`,
+    `- 能源结余：${metrics.powerSurplus_kW > 0 ? '+' : ''}${metrics.powerSurplus_kW} kW（乘员用电 ${metrics.powerDemand_kW} kW 已计入）`,
     `- 总部署质量：${metrics.totalMass_t} t`,
+    `- 发射质量预算：${metrics.totalMass_t}/${metrics.launchBudget_t} t（占用 ${Math.round(metrics.budgetUsage * 100)}%${metrics.budgetOver_t > 0 ? `，超支 ${metrics.budgetOver_t} t` : ''}）`,
     `- 年供水量：${metrics.waterSupply_t_y} t`,
+    `- 水供需平衡：${metrics.waterBalance_t_y >= 0 ? '+' : ''}${metrics.waterBalance_t_y} t/年（需求 ${Math.round(metrics.waterDemand_t_y)} t/年）`,
     `- 年辐射剂量：${metrics.radiation_mSv_y} mSv`,
     `- 通信评分：${metrics.commScore}`,
-    `- 食品自给率：${metrics.foodSelfSufficiency}%`,
+    `- 食品自给率：${metrics.foodSelfSufficiency}%（可支撑比例 ${(metrics.foodSupportRatio * 100).toFixed(0)}%）`,
     `- 运输能力：${metrics.transportCapacity}`,
     `- 综合风险：${metrics.riskScore}/18`,
     `- 可持续性：${metrics.sustainability}/30`,
