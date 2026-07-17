@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { getPlannedSites, getSiteDecisions, getCompletedSteps, computeNetworkMetrics } from './state.js';
 
 export const bases = [
   {
@@ -115,7 +116,8 @@ export const bases = [
 let scene, camera, renderer, controls, composer, moon, markerGroup, glow, stars, earth;
 let selectedMarker = null;
 let overlayGroup = null;
-let siteBeam = null;
+let latestState = null;       // 最近一次 updateDecisionOverlays 收到的 state 快照（HUD 悬停卡使用）
+const flowArcs = [];          // 补给弧线流光：{ curve, points, count, speed, offset }
 const markers = [];
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
@@ -436,6 +438,12 @@ export function initMoon() {
     const illum = Math.max(0, Math.min(100, base.illumination ?? 0));
     const icePct = Math.max(0, Math.min(100, ((base.iceWt ?? 0) / 6) * 100));
     const slopePct = Math.max(0, Math.min(100, ((base.slope ?? 0) / 15) * 100));
+    // 多基地网络：已规划基地显示部署进度，未规划基地引导开始规划
+    const plannedIds = safePlannedSites(latestState);
+    const decisions = plannedIds.includes(base.id) ? safeSiteDecisions(latestState, base.id) : null;
+    const deployLine = decisions
+      ? `<div class="moon-hud__deployed">已部署 ${safeCompletedSteps(decisions)}/6 系统</div>`
+      : `<div class="moon-hud__deployed moon-hud__deployed--idle">点击开始规划</div>`;
     return `
       <div class="moon-hud__frame">
         <i class="moon-hud__corner moon-hud__corner--tl"></i>
@@ -462,6 +470,7 @@ export function initMoon() {
             <span class="moon-hud__value">${base.slope}°</span>
           </div>
         </div>
+        ${deployLine}
         <div class="moon-hud__hint">点击开始推演 →</div>
       </div>`;
   }
@@ -596,6 +605,18 @@ export function initMoon() {
       }
     });
 
+    // 补给弧线流光：每个 link 的光点串沿曲线参数循环前进
+    for (let i = 0; i < flowArcs.length; i++) {
+      const fa = flowArcs[i];
+      const attr = fa.points.geometry.getAttribute('position');
+      for (let j = 0; j < fa.count; j++) {
+        const tt = (fa.offset + j / fa.count + t * fa.speed) % 1;
+        const p = fa.curve.getPoint(tt);
+        attr.setXYZ(j, p.x, p.y, p.z);
+      }
+      attr.needsUpdate = true;
+    }
+
     // HUD 悬停卡：跟随鼠标的惯性延迟
     if (tooltip) {
       tooltipX += (tooltipTX - tooltipX) * 0.18;
@@ -696,6 +717,9 @@ export function initMoon() {
       controls = null;
     }
     markers.length = 0;
+    flowArcs.length = 0;
+    latestState = null;
+    overlayGroup = null;
     selectedMarker = null;
     camera = null;
     moon = null;
@@ -745,6 +769,24 @@ const decisionColors = {
   transport: { hopper: 0xff6600, mass: 0x0066ff, cable: 0xffcc66 }
 };
 
+// 补给资源配色与流速（光点沿弧线的参数速度，圈/秒）
+const resourceColors = { water: 0x44bbff, power: 0xffbb33, food: 0x66ff99 };
+const resourceSpeeds = { water: 0.09, power: 0.14, food: 0.06 };
+
+// state.js 契约的安全封装：并行开发期间形状不符时不至于拖垮渲染
+function safePlannedSites(state) {
+  try { return (state && getPlannedSites(state)) || []; } catch (e) { return []; }
+}
+function safeSiteDecisions(state, siteId) {
+  try { return (state && getSiteDecisions(state, siteId)) || null; } catch (e) { return null; }
+}
+function safeCompletedSteps(decisions) {
+  try { return decisions ? getCompletedSteps(decisions) : 0; } catch (e) { return 0; }
+}
+function safeNetworkLinks(state) {
+  try { return (state && computeNetworkMetrics(state)?.links) || []; } catch (e) { return []; }
+}
+
 function disposeObject(obj) {
   if (obj.geometry) obj.geometry.dispose();
   if (obj.material) {
@@ -756,15 +798,15 @@ function disposeObject(obj) {
   }
 }
 
-function createSiteBeam(base) {
+function createSiteBeam(base, emphasis = 1) {
   const illumination = base.illumination ?? 50;
   const height = 0.12 + (illumination / 100) * 0.55;
-  const geometry = new THREE.CylinderGeometry(0.012, 0.035, height, 16, 1, true);
+  const geometry = new THREE.CylinderGeometry(0.012 * emphasis, 0.035 * emphasis, height, 16, 1, true);
   geometry.translate(0, height / 2, 0);
   const material = new THREE.MeshBasicMaterial({
     color: base.tone,
     transparent: true,
-    opacity: 0.35,
+    opacity: Math.min(1, 0.35 * emphasis),
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide
@@ -797,67 +839,119 @@ function alignOverlayToSurface(overlay, lat, lon, surfaceRadius) {
   overlay.rotateX(Math.PI / 2);
 }
 
-function updateSiteBeam(siteId) {
-  if (!overlayGroup || !siteId) {
-    if (siteBeam) {
-      disposeObject(siteBeam);
-      overlayGroup?.remove(siteBeam);
-      siteBeam = null;
-    }
-    return;
-  }
-  const base = bases.find(b => b.id === siteId);
-  if (!base) return;
+// 补给弧线：3D 大圆弧 Tube + 沿曲线循环前进的流光点串
+function createSupplyArc(link, fromBase, toBase) {
+  const color = resourceColors[link.resource] ?? 0xffffff;
+  const p0 = latLonToVector3(fromBase.lat, fromBase.lon, 1.03);
+  const p2 = latLonToVector3(toBase.lat, toBase.lon, 1.03);
 
-  if (siteBeam) {
-    disposeObject(siteBeam);
-    overlayGroup.remove(siteBeam);
-  }
-  siteBeam = createSiteBeam(base);
-  alignOverlayToSurface(siteBeam, base.lat, base.lon, 1.03);
-  overlayGroup.add(siteBeam);
+  // 中点抬升高度随两端角距缩放（两端同半径，angleTo 即角距）
+  const angle = p0.angleTo(p2);
+  const lift = 1.35 + Math.min(1, angle / Math.PI) * 0.15;
+  const mid = p0.clone().add(p2).multiplyScalar(0.5).normalize().multiplyScalar(lift);
+  const curve = new THREE.QuadraticBezierCurve3(p0, mid, p2);
+
+  const tubeGeo = new THREE.TubeGeometry(curve, 32, 0.004, 8, false);
+  const tubeMat = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.65,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  const tube = new THREE.Mesh(tubeGeo, tubeMat);
+  tube.userData = { type: 'supplyArc' };
+  overlayGroup.add(tube);
+
+  // 流光点串：12 个亮点沿曲线参数 t 循环流动，速度随资源类型略有差异
+  const count = 12;
+  const positions = new Float32Array(count * 3);
+  const ptsGeo = new THREE.BufferGeometry();
+  ptsGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const ptsMat = new THREE.PointsMaterial({
+    color,
+    size: 0.022,
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true
+  });
+  const points = new THREE.Points(ptsGeo, ptsMat);
+  points.userData = { type: 'flowPoints' };
+  overlayGroup.add(points);
+
+  flowArcs.push({
+    curve,
+    points,
+    count,
+    speed: resourceSpeeds[link.resource] ?? 0.08,
+    offset: Math.random()
+  });
 }
 
-export function updateDecisionOverlays(state) {
-  if (!overlayGroup) return;
+const overlayTypes = ['siteBeam', 'decisionRing', 'supplyArc', 'flowPoints'];
 
-  // 清除旧的决策环
-  const toRemove = [];
-  overlayGroup.children.forEach(child => {
-    if (child.userData.type === 'decisionRing') {
-      toRemove.push(child);
-    }
-  });
+function clearOverlays() {
+  const toRemove = overlayGroup.children.filter(child => overlayTypes.includes(child.userData.type));
   toRemove.forEach(child => {
     disposeObject(child);
     overlayGroup.remove(child);
   });
+  flowArcs.length = 0;
+}
 
-  const siteId = state?.site;
-  if (!siteId) return;
-  const base = bases.find(b => b.id === siteId);
-  if (!base) return;
+export function updateDecisionOverlays(state) {
+  latestState = state || null; // HUD 悬停卡需要最新快照，即使月球未初始化也记录
+  if (!overlayGroup) return;
 
-  const pos = latLonToVector3(base.lat, base.lon, 1.03);
-  const normal = pos.clone().normalize();
+  clearOverlays();
+  if (!state) return;
 
-  let ringIndex = 0;
-  const ringConfigs = [
-    { key: 'energy', radius: 0.14 },
-    { key: 'water', radius: 0.19 },
-    { key: 'radiation', radius: 0.24 }
-  ];
+  const plannedIds = safePlannedSites(state);
 
-  ringConfigs.forEach(({ key, radius }) => {
-    const choice = state[key];
-    if (!choice) return;
-    const color = decisionColors[key]?.[choice] ?? 0xffffff;
-    const ringPos = pos.clone().add(normal.clone().multiplyScalar(0.04 + ringIndex * 0.012));
-    const ring = createDecisionRing(radius, color);
-    ring.position.copy(ringPos);
-    ring.lookAt(ringPos.clone().add(normal));
-    overlayGroup.add(ring);
-    ringIndex += 1;
+  plannedIds.forEach(siteId => {
+    const base = bases.find(b => b.id === siteId);
+    if (!base) return;
+    const decisions = safeSiteDecisions(state, siteId);
+    if (!decisions || safeCompletedSteps(decisions) < 1) return; // ≥1 项决策才点亮
+
+    const isActive = state.activeSite === siteId;
+    const emphasis = isActive ? 1.3 : 1;
+
+    // 光柱（基地 tone 色；activeSite 略亮略粗）
+    const beam = createSiteBeam(base, emphasis);
+    alignOverlayToSurface(beam, base.lat, base.lon, 1.03);
+    overlayGroup.add(beam);
+
+    // 决策环：energy / water / radiation，按该基地自己的 decisions 取色
+    const pos = latLonToVector3(base.lat, base.lon, 1.03);
+    const normal = pos.clone().normalize();
+    const ringConfigs = [
+      { key: 'energy', radius: 0.14 },
+      { key: 'water', radius: 0.19 },
+      { key: 'radiation', radius: 0.24 }
+    ];
+    let ringIndex = 0;
+    ringConfigs.forEach(({ key, radius }) => {
+      const choice = decisions[key];
+      if (!choice) return;
+      const color = decisionColors[key]?.[choice] ?? 0xffffff;
+      const ringPos = pos.clone().add(normal.clone().multiplyScalar(0.04 + ringIndex * 0.012));
+      const ring = createDecisionRing(radius, color);
+      ring.position.copy(ringPos);
+      ring.lookAt(ringPos.clone().add(normal));
+      overlayGroup.add(ring);
+      ringIndex += 1;
+    });
+  });
+
+  // 补给弧线：links 非空时为每条 link 画大圆弧 + 流光
+  safeNetworkLinks(state).forEach(link => {
+    const fromBase = bases.find(b => b.id === link.from);
+    const toBase = bases.find(b => b.id === link.to);
+    if (!fromBase || !toBase || fromBase === toBase) return;
+    createSupplyArc(link, fromBase, toBase);
   });
 }
 
@@ -889,6 +983,5 @@ export function highlightSite(siteId) {
       }
     }
   });
-
-  updateSiteBeam(siteId);
+  // 光柱与决策环由 updateDecisionOverlays 统一按多基地网络渲染
 }

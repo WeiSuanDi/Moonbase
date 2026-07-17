@@ -139,6 +139,39 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* —— 部署状态行（多基地网络）—— */
+.moon-hud__deployed {
+  margin-top: 8px;
+  padding: 4px 8px;
+  border: 1px solid rgba(0, 230, 180, 0.35);
+  background: rgba(0, 200, 160, 0.08);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  color: #8fffd9;
+  text-shadow: 0 0 8px rgba(0, 255, 200, 0.35);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.moon-hud__deployed::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  background: #4dffcf;
+  box-shadow: 0 0 6px rgba(0, 255, 200, 0.8);
+  flex: 0 0 auto;
+}
+.moon-hud__deployed--idle {
+  border-color: rgba(96, 214, 255, 0.3);
+  background: rgba(0, 180, 255, 0.06);
+  color: rgba(140, 220, 255, 0.85);
+  text-shadow: 0 0 8px rgba(0, 200, 255, 0.3);
+}
+.moon-hud__deployed--idle::before {
+  background: rgba(96, 214, 255, 0.7);
+  box-shadow: 0 0 6px rgba(0, 200, 255, 0.5);
+}
+
 /* —— 底部提示 —— */
 .moon-hud__hint {
   margin-top: 10px;

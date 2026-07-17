@@ -71,10 +71,12 @@ function init() {
   moonCleanup = initMoon();
   window.addEventListener('marker-click', onMarkerClick);
 
-  // 如果用户有进行中的推演状态，在首页高亮对应站点并叠加决策视觉签名
+  // 新 state 形状：高亮当前主基地，并按多基地网络渲染所有已规划基地的光柱/决策环与补给弧线
   const state = getState();
-  if (state?.site) {
-    highlightSite(state.site);
+  if (state?.activeSite) {
+    highlightSite(state.activeSite);
+  }
+  if (state) {
     updateDecisionOverlays(state);
   }
 }
