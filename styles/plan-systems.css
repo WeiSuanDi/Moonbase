@@ -259,3 +259,604 @@ canvas.ps-radar {
     height: 260px;
   }
 }
+
+
+/* ============================================================
+   多基地网络 · 建造模式装配带 · 选项规格 · 补给链路图
+   ============================================================ */
+
+/* ---------- 基地网络行（mission-console 顶部） ---------- */
+.ps-bases-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  flex-wrap: wrap;
+  padding-bottom: .8rem;
+  margin-bottom: .15rem;
+  border-bottom: 1px solid rgba(82, 159, 255, .12);
+}
+
+.ps-bases-label {
+  color: #b9deff;
+  font-size: .72rem;
+  letter-spacing: .18em;
+  white-space: nowrap;
+}
+
+.ps-bases-chips {
+  display: flex;
+  gap: .45rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ps-base-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .32rem .62rem;
+  border-radius: 999px;
+  border: 1px solid rgba(101, 183, 255, .22);
+  background: rgba(7, 20, 38, .55);
+  color: var(--lunar-white);
+  font-family: inherit;
+  font-size: .72rem;
+  cursor: pointer;
+  transition: border-color .2s ease, box-shadow .2s ease, background .2s ease, transform .2s ease;
+}
+
+.ps-base-chip:hover {
+  border-color: rgba(101, 183, 255, .55);
+  transform: translateY(-1px);
+}
+
+.ps-base-chip.active {
+  border-color: var(--tone, rgba(0, 212, 255, .65));
+  background: linear-gradient(90deg, rgba(22, 119, 255, .22), rgba(0, 212, 255, .1));
+  box-shadow: 0 0 14px rgba(0, 212, 255, .22);
+}
+
+.ps-base-chip-name {
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 6 格完成度微点 */
+.ps-base-dots {
+  display: inline-flex;
+  gap: 2.5px;
+}
+
+.ps-base-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .14);
+}
+
+.ps-base-dot.on {
+  background: var(--cyan);
+  box-shadow: 0 0 5px rgba(0, 212, 255, .8);
+}
+
+/* 可行性微分 */
+.ps-base-score {
+  min-width: 1.5rem;
+  text-align: center;
+  font-size: .68rem;
+  font-weight: 700;
+  color: #8ccaff;
+  padding: .05rem .3rem;
+  border-radius: 6px;
+  background: rgba(0, 212, 255, .08);
+  border: 1px solid rgba(0, 212, 255, .18);
+}
+
+.ps-base-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1;
+  transition: color .15s ease, background .15s ease;
+}
+
+.ps-base-remove:hover {
+  color: #fff;
+  background: rgba(255, 123, 123, .35);
+}
+
+.ps-add-chip {
+  border-style: dashed;
+  color: #8ccaff;
+}
+
+.ps-add-chip.open {
+  border-color: rgba(0, 212, 255, .6);
+  color: #d9f4ff;
+}
+
+.ps-add-chip.disabled,
+.ps-add-chip:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  border-style: solid;
+  transform: none;
+}
+
+/* ---------- 添加基地选择器 ---------- */
+.ps-site-picker {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(101, 183, 255, .2);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(13, 28, 49, .85), rgba(9, 10, 14, .8));
+  padding: .8rem .9rem;
+  animation: psPickerIn .25s ease;
+}
+
+@keyframes psPickerIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.ps-picker-head {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  margin-bottom: .6rem;
+  color: #d9efff;
+  font-size: .8rem;
+}
+
+.ps-picker-head small {
+  color: var(--muted);
+  font-size: .66rem;
+  flex: 1;
+}
+
+.ps-picker-close {
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, .14);
+  background: rgba(255, 255, 255, .04);
+  color: var(--muted);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: .8rem;
+  line-height: 1;
+  transition: color .15s ease, border-color .15s ease;
+}
+
+.ps-picker-close:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .4);
+}
+
+.ps-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: .55rem;
+}
+
+.ps-picker-card {
+  display: grid;
+  gap: .22rem;
+  text-align: left;
+  cursor: pointer;
+  padding: .6rem .7rem;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  background: rgba(255, 255, 255, .03);
+  color: var(--lunar-white);
+  font-family: inherit;
+  transition: border-color .2s ease, background .2s ease, transform .2s ease, box-shadow .2s ease;
+}
+
+.ps-picker-card:hover {
+  border-color: var(--tone, rgba(0, 212, 255, .5));
+  background: rgba(0, 212, 255, .06);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 120, 255, .15);
+}
+
+.ps-picker-name {
+  font-weight: 700;
+  font-size: .84rem;
+}
+
+.ps-picker-sub {
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.ps-picker-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem;
+  margin-top: .15rem;
+}
+
+.ps-picker-tag {
+  font-size: .6rem;
+  color: #9fd8ff;
+  border: 1px solid rgba(0, 212, 255, .25);
+  border-radius: 999px;
+  padding: .08rem .4rem;
+}
+
+.ps-picker-diff {
+  font-size: .64rem;
+  margin-top: .2rem;
+}
+
+.ps-picker-diff.diff-1 { color: var(--success); }
+.ps-picker-diff.diff-2 { color: var(--warn); }
+.ps-picker-diff.diff-3 { color: var(--danger); }
+
+.ps-picker-empty {
+  color: var(--muted);
+  font-size: .74rem;
+  padding: .4rem;
+}
+
+/* ---------- 基地装配带（建造模式） ---------- */
+.ps-assembly {
+  width: 100%;
+}
+
+.ps-assembly-head {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  margin-bottom: .5rem;
+}
+
+.ps-assembly-title {
+  color: #b9deff;
+  font-size: .72rem;
+  letter-spacing: .2em;
+}
+
+.ps-assembly-head small {
+  color: var(--muted);
+  font-size: .66rem;
+}
+
+.ps-assembly-slots {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: .5rem;
+  padding: .6rem .7rem;
+  border-radius: 14px;
+  border: 1px solid rgba(101, 183, 255, .16);
+  background: linear-gradient(145deg, rgba(10, 22, 40, .6), rgba(8, 9, 12, .55));
+}
+
+.ps-slot {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: .3rem;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.ps-slot-visual {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color .2s ease, box-shadow .2s ease;
+}
+
+.ps-slot.empty .ps-slot-visual {
+  border: 1.5px dashed rgba(120, 180, 255, .3);
+  background: rgba(255, 255, 255, .02);
+}
+
+.ps-slot.empty:hover .ps-slot-visual {
+  border-color: rgba(120, 180, 255, .55);
+}
+
+.ps-slot-sysicon {
+  font-size: 1.05rem;
+  opacity: .5;
+  filter: grayscale(.4);
+}
+
+.ps-slot.filled .ps-slot-visual {
+  border: 1px solid rgba(0, 212, 255, .45);
+  background: radial-gradient(circle at 50% 35%, rgba(0, 212, 255, .14), rgba(6, 18, 31, .6));
+  box-shadow: 0 0 14px rgba(0, 212, 255, .18), inset 0 0 10px rgba(0, 212, 255, .08);
+}
+
+.ps-slot.filled:hover .ps-slot-visual {
+  box-shadow: 0 0 20px rgba(0, 212, 255, .32), inset 0 0 10px rgba(0, 212, 255, .12);
+}
+
+.ps-glyph {
+  width: 30px;
+  height: 30px;
+  color: #8fe9ff;
+  filter: drop-shadow(0 0 4px rgba(0, 212, 255, .6));
+}
+
+.ps-slot-label {
+  max-width: 100%;
+  font-size: .6rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+.ps-slot.filled .ps-slot-label {
+  color: #c9ecff;
+}
+
+/* 降落部署动画：从上方落入 + 透明度 + 扩散光环 */
+.ps-slot.deploy .ps-glyph {
+  animation: psDeploy .55s cubic-bezier(.22, 1.4, .36, 1) both;
+}
+
+@keyframes psDeploy {
+  0% { transform: translateY(-18px); opacity: 0; }
+  60% { transform: translateY(2px); opacity: 1; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+.ps-slot-ring {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 46px;
+  height: 46px;
+  margin-left: -23px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 212, 255, .7);
+  animation: psRing .6s ease-out both;
+  pointer-events: none;
+}
+
+@keyframes psRing {
+  from { transform: scale(.45); opacity: .9; }
+  to { transform: scale(1.7); opacity: 0; }
+}
+
+/* ---------- 选项规格标签 ---------- */
+.decision-card-single .option-btn {
+  flex-wrap: wrap;
+}
+
+.ps-specs {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem .9rem;
+  margin-top: .15rem;
+  padding-top: .45rem;
+  border-top: 1px dashed rgba(255, 255, 255, .08);
+  font-size: .66rem;
+  color: var(--muted);
+}
+
+.ps-spec b {
+  color: #c9ecff;
+  font-weight: 600;
+  margin-left: .2rem;
+}
+
+.ps-spec b.pos { color: var(--success); }
+.ps-spec b.neg { color: var(--danger); }
+
+.ps-spec .ps-risk {
+  color: var(--warn);
+  letter-spacing: .12em;
+  font-size: .6rem;
+}
+
+/* 决策确认脉冲（250ms）：边框点亮 + 轻微放大 */
+.option-btn.ps-pulse {
+  animation: psConfirmPulse .25s ease both;
+}
+
+@keyframes psConfirmPulse {
+  0% { transform: scale(1); }
+  40% {
+    transform: scale(1.025);
+    border-color: rgba(0, 212, 255, .9);
+    box-shadow: 0 0 22px rgba(0, 212, 255, .35);
+  }
+  100% {
+    transform: scale(1.012);
+    border-color: rgba(0, 212, 255, .75);
+    box-shadow: 0 0 16px rgba(0, 212, 255, .28);
+  }
+}
+
+.ps-committing .option-btn {
+  pointer-events: none;
+}
+
+.ps-committing .option-btn:not(.ps-pulse) {
+  opacity: .55;
+}
+
+/* ---------- 补给链路网络图 ---------- */
+.ps-network {
+  width: 100%;
+}
+
+.ps-net-head {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  margin-bottom: .5rem;
+}
+
+.ps-net-title {
+  color: #b9deff;
+  font-size: .72rem;
+  letter-spacing: .2em;
+}
+
+.ps-net-head small {
+  color: var(--muted);
+  font-size: .66rem;
+}
+
+.ps-net-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 190px;
+  gap: .8rem;
+  padding: .7rem .8rem;
+  border-radius: 14px;
+  border: 1px solid rgba(101, 183, 255, .16);
+  background: linear-gradient(145deg, rgba(10, 22, 40, .6), rgba(8, 9, 12, .55));
+}
+
+.ps-net-canvas {
+  width: 100%;
+  height: 230px;
+  display: block;
+}
+
+.ps-net-side {
+  display: grid;
+  gap: .55rem;
+  align-content: start;
+}
+
+.ps-net-score {
+  display: flex;
+  align-items: baseline;
+  gap: .4rem;
+}
+
+.ps-net-score-value {
+  font-size: 1.7rem;
+  font-weight: 700;
+  color: var(--cyan);
+  text-shadow: 0 0 16px rgba(0, 212, 255, .45);
+}
+
+.ps-net-score-label {
+  color: var(--muted);
+  font-size: .66rem;
+  letter-spacing: .12em;
+}
+
+.ps-net-share {
+  display: grid;
+  gap: .3rem;
+}
+
+.ps-net-share-row {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .7rem;
+  color: #a6c7ea;
+}
+
+.ps-net-share-row b {
+  margin-left: auto;
+  color: #d7edff;
+}
+
+.ps-net-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+
+.ps-net-swatch.water { background: #44aaff; box-shadow: 0 0 6px rgba(68, 170, 255, .7); }
+.ps-net-swatch.power { background: #ffaa55; box-shadow: 0 0 6px rgba(255, 170, 85, .7); }
+.ps-net-swatch.food { background: #7ee787; box-shadow: 0 0 6px rgba(126, 231, 135, .7); }
+
+.ps-net-offhint {
+  font-size: .66rem;
+  color: var(--muted);
+  border: 1px dashed rgba(255, 255, 255, .18);
+  border-radius: 8px;
+  padding: .35rem .5rem;
+}
+
+/* ---------- 完成卡片：网络评分胶囊 ---------- */
+.ps-net-pill {
+  margin: 0 auto 1.25rem;
+  padding: .45rem .95rem;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 999px;
+  font-size: .78rem;
+  color: #8fe9ff;
+  border: 1px solid rgba(0, 212, 255, .35);
+  background: rgba(0, 212, 255, .07);
+}
+
+.ps-net-pill strong {
+  color: var(--cyan);
+}
+
+.ps-net-pill small {
+  margin-left: .3rem;
+  color: var(--muted);
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 900px) {
+  .ps-assembly-slots {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .ps-net-body {
+    grid-template-columns: 1fr;
+  }
+
+  .ps-net-side {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    align-items: center;
+  }
+}
+
+@media (max-width: 550px) {
+  .ps-assembly-slots {
+    grid-template-columns: repeat(3, 1fr);
+    gap: .35rem;
+    padding: .5rem;
+  }
+
+  .ps-slot-visual {
+    width: 40px;
+    height: 40px;
+  }
+
+  .ps-glyph {
+    width: 26px;
+    height: 26px;
+  }
+
+  .ps-base-chip-name {
+    max-width: 5.5rem;
+  }
+
+  .ps-net-canvas {
+    height: 200px;
+  }
+
+  .ps-specs {
+    gap: .25rem .6rem;
+  }
+}
