@@ -1,0 +1,202 @@
+/* ============================================================
+   fx.css —— 全局科幻氛围层
+   跃迁转场 / 开机引导终端日志 / 扫描线 + 颗粒质感层
+   所有 class 均以 .fx- 开头，避免与 main.css 冲突
+   ============================================================ */
+
+/* ——— 跃迁过场覆盖层（由 fx.js 挂载到 <html>，跨 body 替换存活） ——— */
+.fx-warp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    radial-gradient(ellipse at 50% 50%, rgba(12, 22, 48, 0.94) 0%, rgba(4, 7, 16, 0.985) 72%),
+    #04070f;
+  transition: opacity 0.16s ease-in;
+}
+
+.fx-warp-overlay.fx-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.fx-warp-overlay.fx-leaving {
+  opacity: 0;
+  transition: opacity 0.3s ease-out;
+}
+
+/* 星点向前拉伸成光线（曲速感） */
+.fx-warp-star {
+  position: absolute;
+  left: var(--fx-l, 50%);
+  top: var(--fx-t, 50%);
+  width: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: #d8ecff;
+  box-shadow: 0 0 8px rgba(150, 205, 255, 0.85);
+  opacity: 0;
+  transform-origin: 0 50%;
+  transform: rotate(var(--fx-a, 0deg)) translateX(0) scaleX(1);
+  will-change: transform, opacity;
+}
+
+.fx-warp-overlay.fx-active .fx-warp-star {
+  animation: fxWarpStar 0.52s cubic-bezier(0.55, 0.02, 0.9, 0.45) var(--fx-d, 0s) forwards;
+}
+
+@keyframes fxWarpStar {
+  0%   { opacity: 0; transform: rotate(var(--fx-a, 0deg)) translateX(0) scaleX(1); }
+  18%  { opacity: 1; }
+  100% { opacity: 0; transform: rotate(var(--fx-a, 0deg)) translateX(var(--fx-dist, 40vw)) scaleX(30); }
+}
+
+/* 水平扫描线 */
+.fx-warp-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, rgba(126, 224, 255, 0.9) 50%, transparent 100%);
+  box-shadow: 0 0 22px rgba(90, 200, 255, 0.55);
+  opacity: 0;
+}
+
+.fx-warp-overlay.fx-active .fx-warp-scan {
+  animation: fxWarpScan 0.46s linear 0.02s forwards;
+}
+
+@keyframes fxWarpScan {
+  0%   { top: -2%;  opacity: 0; }
+  12%  { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { top: 102%; opacity: 0; }
+}
+
+/* 中央跃迁辉光 */
+.fx-warp-glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34vmin;
+  height: 34vmin;
+  transform: translate(-50%, -50%) scale(0.4);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(140, 210, 255, 0.28) 0%, transparent 65%);
+  opacity: 0;
+}
+
+.fx-warp-overlay.fx-active .fx-warp-glow {
+  animation: fxWarpGlow 0.5s ease-out forwards;
+}
+
+@keyframes fxWarpGlow {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+  35%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+}
+
+/* ——— 新页面全息显影 ——— */
+body.fx-page-reveal {
+  animation: fxPageReveal 0.5s cubic-bezier(0.22, 0.8, 0.35, 1) both;
+}
+
+@keyframes fxPageReveal {
+  from { opacity: 0.12; filter: blur(6px) saturate(1.5); transform: scale(1.015); }
+  to   { opacity: 1;    filter: blur(0)   saturate(1);   transform: scale(1); }
+}
+
+/* ——— 全局质感层：极淡扫描线 + 细颗粒噪点 ——— */
+.fx-grain {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.32) 0, rgba(255, 255, 255, 0.32) 1px, transparent 1px, transparent 4px);
+  background-size: 140px 140px, 100% 4px;
+  animation: fxGrainShift 1.4s steps(3) infinite;
+}
+
+@keyframes fxGrainShift {
+  0%   { background-position: 0 0, 0 0; }
+  50%  { background-position: 32px 18px, 0 0; }
+  100% { background-position: -24px 40px, 0 0; }
+}
+
+/* ——— 开机引导终端日志（仅 index 加载层内） ——— */
+.fx-boot-log {
+  width: min(360px, 84vw);
+  min-height: 7.2em;
+  margin-top: 1.3rem;
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
+  font-size: 0.72rem;
+  line-height: 1.75;
+  letter-spacing: 0.05em;
+  text-align: left;
+  color: #6ee7c8;
+  text-shadow: 0 0 9px rgba(110, 231, 200, 0.35);
+  white-space: pre-wrap;
+  overflow: hidden;
+}
+
+.fx-boot-line {
+  display: block;
+}
+
+.fx-boot-ok {
+  color: #93f7b0;
+}
+
+.fx-boot-final {
+  color: #bfe9ff;
+  text-shadow: 0 0 10px rgba(150, 215, 255, 0.5);
+}
+
+.fx-boot-cursor {
+  display: inline-block;
+  margin-left: 1px;
+  animation: fxCursorBlink 0.85s steps(1) infinite;
+}
+
+@keyframes fxCursorBlink {
+  0%, 55%   { opacity: 1; }
+  56%, 100% { opacity: 0; }
+}
+
+/* ——— prefers-reduced-motion：转场降级为简单淡入淡出 ——— */
+@media (prefers-reduced-motion: reduce) {
+  .fx-warp-overlay {
+    transition: opacity 0.15s ease;
+  }
+
+  .fx-warp-overlay.fx-active .fx-warp-star,
+  .fx-warp-overlay.fx-active .fx-warp-scan,
+  .fx-warp-overlay.fx-active .fx-warp-glow {
+    animation: none;
+    opacity: 0;
+  }
+
+  body.fx-page-reveal {
+    animation: fxPageRevealReduced 0.2s ease-out both;
+  }
+
+  .fx-grain {
+    animation: none;
+  }
+
+  .fx-boot-cursor {
+    animation: none;
+  }
+}
+
+@keyframes fxPageRevealReduced {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
