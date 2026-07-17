@@ -1395,35 +1395,32 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
 
 .plan-header {
   position: relative;
-  padding: 5rem 4vw 2.5rem;
-  text-align: center;
-  background: radial-gradient(ellipse at 50% 20%, rgba(0,212,255,0.06) 0%, rgba(26,26,28,0.3) 50%, transparent 80%);
+  padding: 4rem 4vw 0.9rem;
+  text-align: left;
+  background: radial-gradient(ellipse at 50% 20%, rgba(0,212,255,0.05) 0%, rgba(26,26,28,0.25) 55%, transparent 85%);
   overflow: hidden;
 }
 
 .plan-header-content {
   position: relative;
   z-index: 2;
-  max-width: 720px;
+  max-width: 1180px;
   margin: 0 auto;
-}
-
-.plan-back-home {
-  display: inline-flex;
-  margin-top: 1.2rem;
-  padding: 0.55rem 1.1rem;
-  font-size: 0.85rem;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.1rem;
 }
 
 .plan-header::before {
   content: '';
   position: absolute;
   top: 50%;
-  left: 50%;
-  width: 600px;
-  height: 600px;
+  left: 30%;
+  width: 260px;
+  height: 260px;
   transform: translate(-50%, -50%);
-  background: radial-gradient(circle, rgba(0,212,255,0.04) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(0,212,255,0.05) 0%, transparent 70%);
   animation: header-pulse 6s ease-in-out infinite;
   pointer-events: none;
 }
@@ -1445,19 +1442,19 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
 
 .plan-header h1 {
   position: relative;
-  margin: 0 0 0.6rem;
-  font-size: clamp(2.2rem, 5vw, 3.2rem);
+  margin: 0;
+  font-size: clamp(1.15rem, 2.2vw, 1.5rem);
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--lunar-white);
-  text-shadow: 0 0 60px rgba(0,212,255,0.15), 0 0 120px rgba(0,212,255,0.06);
+  text-shadow: 0 0 40px rgba(0,212,255,0.12);
 }
 
 .plan-header p {
   position: relative;
   margin: 0;
   color: var(--muted);
-  font-size: 1rem;
+  font-size: 0.78rem;
   letter-spacing: 0.04em;
 }
 
@@ -2023,15 +2020,15 @@ footer a { color: var(--lunar-silver); text-decoration: none; }
   }
 
   .plan-header {
-    padding: 6rem 4vw 2rem;
+    padding: 4.5rem 4vw 0.8rem;
   }
 
   .plan-header h1 {
-    font-size: clamp(1.6rem, 6vw, 2.2rem);
+    font-size: clamp(1.05rem, 4.5vw, 1.3rem);
   }
 
   .plan-header p {
-    font-size: 0.85rem;
+    font-size: 0.72rem;
   }
 
   .plan-main {
