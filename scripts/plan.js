@@ -17,7 +17,7 @@ import { bases, highlightSite, updateDecisionOverlays } from './moon-render.js';
 import { askAgent, generateSummary, compareBases, generateStory, generatePoster, suggestNext } from './agent-client.js';
 
 // DOM refs（每次 init 时重新查询）
-let planTopBar, topbarSite, progressPipeline, topbarStats;
+let planTopBar, topbarSite, progressPipeline, topbarStats, missionConsole;
 let planStage, completedSummary, decisionCardWrapper;
 let resultPanel, resultTitle, resultBody, resultClose, resultReset;
 let agentFab, agentChat, chatClose, chatMessages, chatInput, chatSend, chatChips;
@@ -28,11 +28,28 @@ let currentCardStepKey = null;
 let isAnimating = false;
 let pendingSwitch = null;
 
+const MISSION_KEY = 'moonBaseMissionDirective_v1';
+const missionDirectives = {
+  survival: { icon: '🫧', name: '生存优先', target: '辐射 ≤ 100 mSv / 年', test: m => m.radiation_mSv_y <= 100, brief: '优先保护首批常驻乘员。' },
+  autonomy: { icon: '♻️', name: '自持优先', target: '供水 ≥ 500 t / 年', test: m => m.waterSupply_t_y >= 500, brief: '尽量减少来自地球的补给依赖。' },
+  expansion: { icon: '⚡', name: '扩张优先', target: '功率余量 ≥ 30 kW', test: m => m.powerSurplus_kW >= 30, brief: '为科研与工业扩张保留能源窗口。' }
+};
+
+function getMissionDirective() {
+  try { return localStorage.getItem(MISSION_KEY) || 'survival'; } catch (e) { return 'survival'; }
+}
+
+function setMissionDirective(id) {
+  try { localStorage.setItem(MISSION_KEY, id); } catch (e) { /* 私密模式下仅保留本次体验 */ }
+  renderMissionConsole(getState());
+}
+
 function queryDom() {
   planTopBar = document.getElementById('plan-top-bar');
   topbarSite = document.getElementById('topbar-site');
   progressPipeline = document.getElementById('progress-pipeline');
   topbarStats = document.getElementById('topbar-stats');
+  missionConsole = document.getElementById('mission-console');
 
   planStage = document.getElementById('plan-stage');
   completedSummary = document.getElementById('completed-summary');
@@ -168,8 +185,44 @@ function getStepStatus(state, step, index) {
 
 function render(state) {
   renderTopBar(state);
+  renderMissionConsole(state);
   renderStage(state);
   if (updateDecisionOverlays) updateDecisionOverlays(state);
+}
+
+function renderMissionConsole(state) {
+  if (!missionConsole) return;
+  const activeId = getMissionDirective();
+  const active = missionDirectives[activeId];
+  const metrics = computeMetrics(state);
+  const completed = getCompletedSteps(state);
+  const isPassing = metrics && active.test(metrics);
+  const alert = completed < 2 ? null : buildMissionAlert(state, metrics);
+
+  missionConsole.innerHTML = `
+    <div class="mission-console-inner">
+      <div class="mission-console-title"><span class="signal-dot"></span><span>MISSION CONTROL</span><small>选择本轮推演的首要任务</small></div>
+      <div class="mission-directives">
+        ${Object.entries(missionDirectives).map(([id, item]) => `
+          <button class="mission-directive ${id === activeId ? 'selected' : ''}" data-directive="${id}">
+            <span>${item.icon}</span><strong>${item.name}</strong><em>${item.target}</em>
+          </button>`).join('')}
+      </div>
+      <div class="mission-status ${state.site ? (isPassing ? 'on-track' : 'at-risk') : ''}">
+        <span>${state.site ? (isPassing ? '● 任务指标已达成' : '◌ 任务指标待校准') : '◌ 选择基地后启动任务'}</span>
+        <small>${state.site ? `${completed} / ${steps.length} 系统已部署 · ${active.brief}` : '三种指令会给出不同的成功判定。'}</small>
+      </div>
+      ${alert ? `<div class="mission-alert"><span>⚠ ${alert.title}</span><small>${alert.detail}</small></div>` : ''}
+    </div>`;
+
+  missionConsole.querySelectorAll('[data-directive]').forEach(btn => btn.addEventListener('click', () => setMissionDirective(btn.dataset.directive)));
+}
+
+function buildMissionAlert(state, metrics) {
+  if (state.energy === 'solar' && metrics.powerSurplus_kW < 20) return { title: '月夜储能窗口偏窄', detail: '当前能源方案缺少冗余；后续交通与生命维持会继续占用功率。' };
+  if (state.water === 'earth_supply') return { title: '补给线压力上升', detail: '当前水源依赖地球运输，建议用生命维持方案提高闭环能力。' };
+  if (state.radiation === 'hull') return { title: '银河宇宙线暴露偏高', detail: '加厚舱壁能快速部署，但长驻任务仍需要额外屏蔽策略。' };
+  return { title: '系统耦合开始生效', detail: '每项新决策都会重新平衡基地的能源、质量与长期自持能力。' };
 }
 
 // —— Top Bar ——
@@ -393,6 +446,7 @@ function buildActiveCard(step) {
     </div>
     <div class="decision-desc">${step.description}</div>
     <div class="option-list" id="options-${step.key}"></div>
+    <div class="outcome-preview" id="outcome-preview"><span class="preview-kicker">实时后果预览</span><span>悬停方案，查看它会如何改变当前基地。</span></div>
     <div class="decision-card-actions">
       ${!isFirst ? `<button class="btn btn-ghost card-back-btn" data-back>← 上一步</button>` : '<span></span>'}
       ${!isLast ? `<span class="decision-hint">选择一项以继续</span>` : `<span class="decision-hint">选择最后一项完成推演</span>`}
@@ -408,6 +462,8 @@ function buildActiveCard(step) {
       if (isAnimating) return;
       setDecision(step.key, opt.id);
     });
+    btn.addEventListener('mouseenter', () => renderOutcomePreview(card, step.key, opt.id));
+    btn.addEventListener('focus', () => renderOutcomePreview(card, step.key, opt.id));
     optionList.appendChild(btn);
   });
 
@@ -423,9 +479,25 @@ function buildActiveCard(step) {
   return card;
 }
 
+function renderOutcomePreview(card, stepKey, optionId) {
+  const preview = card.querySelector('#outcome-preview');
+  if (!preview) return;
+  const now = computeMetrics(getState());
+  const trial = { ...getState(), [stepKey]: optionId };
+  const next = computeMetrics(trial);
+  if (!next) return;
+  const delta = (value, before, unit) => `${value >= 0 ? '+' : ''}${value}${unit}`;
+  const power = next.powerSurplus_kW - (now?.powerSurplus_kW || 0);
+  const water = next.waterSupply_t_y - (now?.waterSupply_t_y || 0);
+  const radiation = next.radiation_mSv_y - (now?.radiation_mSv_y || 0);
+  preview.innerHTML = `<span class="preview-kicker">方案预测 · 未提交</span><div class="preview-metrics"><b>功率 ${delta(power, now?.powerSurplus_kW, ' kW')}</b><b>供水 ${delta(water, now?.waterSupply_t_y, ' t/年')}</b><b>辐射 ${delta(radiation, now?.radiation_mSv_y, ' mSv')}</b></div>`;
+}
+
 function buildCompletionCard(state) {
   const metrics = computeMetrics(state);
   const viabilityClass = metrics && metrics.viabilityScore >= 70 ? 'good' : metrics && metrics.viabilityScore >= 45 ? 'warn' : 'bad';
+  const directive = missionDirectives[getMissionDirective()];
+  const missionPass = metrics && directive.test(metrics);
 
   const card = document.createElement('div');
   card.className = 'decision-card decision-card-single completion-card active';
@@ -433,6 +505,7 @@ function buildCompletionCard(state) {
     <div class="completion-icon">🎉</div>
     <h2 class="completion-title">推演完成</h2>
     <p class="completion-desc">你已完成全部 6 项核心决策，综合可行性评分为 <strong class="${viabilityClass}">${metrics?.viabilityScore ?? '—'}/100</strong>。</p>
+    <div class="completion-mission ${missionPass ? 'passed' : 'missed'}">${missionPass ? '✓' : '△'} ${directive.icon} ${directive.name}：${missionPass ? '任务达成' : '尚未达成'} <small>${directive.target}</small></div>
     <div class="completion-actions">
       <button class="btn btn-primary" id="generate-summary-btn">📊 生成可行性简报</button>
       <button class="btn btn-secondary" data-output="compare">⚖️ 多基地对比</button>
