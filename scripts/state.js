@@ -12,13 +12,23 @@ export const CREW_OPTIONS = [4, 12, 50, 100]; // 常驻乘员档位
 export const LAUNCH_BUDGET_T = 300; // 首年发射质量预算（吨）
 
 // ===== 决策流程 =====
+// 顺序即三阶段建设时间线：无人先遣(energy, communication) → 乘员前哨(water, radiation) → 永久基地(habitat, transport)
 export const steps = [
   { key: 'energy', name: '能源系统', description: '能源选择决定月夜生存、工业产能与载荷质量。不同纬度日照窗口差异巨大。' },
+  { key: 'communication', name: '通信网络', description: '高速低延迟链路对远程操控、科学数据传输和乘员心理健康至关重要。' },
   { key: 'water', name: '水源方案', description: '就地开采水冰可减少地球补给，但储量与开采难度因选址而异。' },
   { key: 'radiation', name: '辐射防护', description: '月壤、熔岩洞与厚舱壁是主要屏蔽手段，需平衡工程量与未知风险。' },
-  { key: 'communication', name: '通信网络', description: '高速低延迟链路对远程操控、科学数据传输和乘员心理健康至关重要。' },
   { key: 'habitat', name: '生命维持与食品', description: '闭环生态决定长期自持能力，也直接影响补给成本与生活质量。' },
   { key: 'transport', name: '交通运输', description: '月面运输决定资源流通效率与基地扩张半径。' }
+];
+
+// ===== 三阶段建设时间线 =====
+// 阶段预算是展示性约束（供 UI 警告用），不参与 viabilityScore 计算；
+// 全部阶段状态从 decisions 派生，无存储迁移，STORAGE_KEY 不变。
+export const PHASES = [
+  { id: 1, key: 'precursor', name: '无人先遣', en: 'PHASE 1 · PRECURSOR', icon: '🤖', steps: ['energy', 'communication'], budget_t: 120, brief: '乘员抵达前，先建起能源与通信骨架。' },
+  { id: 2, key: 'outpost',   name: '乘员前哨', en: 'PHASE 2 · OUTPOST',   icon: '🧑‍🚀', steps: ['water', 'radiation'], budget_t: 300, brief: '乘员进驻：解决水与辐射，让人先活下来。' },
+  { id: 3, key: 'colony',    name: '永久基地', en: 'PHASE 3 · COLONY',    icon: '🏙️', steps: ['habitat', 'transport'], budget_t: 500, brief: '走向自持：闭环生态与月面交通网络。' },
 ];
 
 // ===== 选项 =====
@@ -784,4 +794,61 @@ export function isDecisionComplete(decisions) {
 
 export function getCompletedSteps(decisions) {
   return steps.filter(s => !!decisions?.[s.key]).length;
+}
+
+// ===== 阶段工具函数（全部从 decisions 派生，不落存储） =====
+// 返回某决策步骤所属的阶段对象；未知 stepKey 返回 null
+export function getPhaseForStep(stepKey) {
+  return PHASES.find(p => p.steps.includes(stepKey)) || null;
+}
+
+// 该阶段的 steps 是否全部已选
+export function isPhaseComplete(decisions, phaseId) {
+  const phase = PHASES.find(p => p.id === phaseId);
+  if (!phase) return false;
+  return phase.steps.every(key => !!decisions?.[key]);
+}
+
+// 第一个未完成阶段的 id（1|2|3）；全部完成返回 3
+export function getCurrentPhase(decisions) {
+  const pending = PHASES.find(p => !isPhaseComplete(decisions, p.id));
+  return pending ? pending.id : 3;
+}
+
+// 阶段完成进度 { done, total }
+export function getPhaseProgress(decisions, phaseId) {
+  const phase = PHASES.find(p => p.id === phaseId);
+  if (!phase) return { done: 0, total: 0 };
+  return {
+    done: phase.steps.filter(key => !!decisions?.[key]).length,
+    total: phase.steps.length
+  };
+}
+
+// 该阶段已选决策的发射质量合计（吨，整数；合并 siteModifier 后取 mass_t）
+export function computePhaseMass(siteId, decisions, phaseId) {
+  const phase = PHASES.find(p => p.id === phaseId);
+  if (!phase) return 0;
+  let mass = 0;
+  phase.steps.forEach(key => {
+    const choice = decisions?.[key];
+    if (!choice) return;
+    const rule = getRule(key, choice, siteId);
+    if (rule && typeof rule.mass_t === 'number') mass += rule.mass_t;
+  });
+  return Math.round(mass);
+}
+
+// 阶段预算状态 { used_t, budget_t, over_t, usage }；usage = used/budget，可 >1
+export function getPhaseBudgetStatus(siteId, decisions, phaseId) {
+  const phase = PHASES.find(p => p.id === phaseId);
+  if (!phase) return { used_t: 0, budget_t: 0, over_t: 0, usage: 0 };
+  const used_t = computePhaseMass(siteId, decisions, phaseId);
+  const budget_t = phase.budget_t;
+  return {
+    used_t,
+    budget_t,
+    over_t: Math.max(0, used_t - budget_t),
+    usage: budget_t > 0 ? used_t / budget_t : 0
+  };
 }
