@@ -312,7 +312,7 @@ function init() {
   render(state);
   if (state.activeSite) {
     if (highlightSite) highlightSite(state.activeSite);
-    if (updateDecisionOverlays) updateDecisionOverlays(buildLegacyState(state));
+    if (updateDecisionOverlays) updateDecisionOverlays(state);
   }
 }
 
@@ -370,7 +370,7 @@ function render(state) {
   renderAssembly(state);
   renderNetworkPanel(state);
   renderStage(state);
-  if (updateDecisionOverlays) updateDecisionOverlays(buildLegacyState(state));
+  if (updateDecisionOverlays) updateDecisionOverlays(state);
   if (highlightSite) highlightSite(state.activeSite || null);
   checkBudgetTransition(state);
   const decisions = getActiveDecisions(state);
