@@ -21,6 +21,10 @@ import {
   getCompletedSteps,
   CREW_OPTIONS
 } from './state.js';
+// 三阶段契约（PHASES / getPhaseForStep / getCurrentPhase / isPhaseComplete /
+// getPhaseProgress / computePhaseMass / getPhaseBudgetStatus）由另一 worker 在 state.js 落地。
+// 走命名空间访问 + 本地降级：契约未就绪时模块仍可加载，契约就绪后自动切换到真实实现。
+import * as stateApi from './state.js';
 import { bases, highlightSite, updateDecisionOverlays } from './moon-render.js';
 import { askAgent, generateSummary, compareBases, generateStory, generatePoster, suggestNext } from './agent-client.js';
 
@@ -52,6 +56,9 @@ let networkDashOffset = 0;      // 流动虚线相位（跨渲染保持连续）
 let networkCanvas = null;
 let networkState = null;
 let networkData = null;
+let prevPhaseId = null;        // 上次 renderStage 时的当前阶段（同基地严格前进才插过场卡）
+let prevPhaseSiteId = null;    // 上次记录阶段所属基地
+let phaseCeremony = null;      // 展示中的阶段过场卡 { key, nextStepKey }，用于无关渲染不打断仪式
 
 // —— __moonFx 安全包装（worker 可能不存在，全部可选链 + 降级） ——
 function fxSound(name) {
@@ -142,6 +149,115 @@ function safeRule(stepKey, choiceId, siteId) {
 
 function safeNetworkMetrics(state) {
   try { return computeNetworkMetrics(state); } catch (e) { return null; }
+}
+
+// —— 三阶段契约安全访问（stateApi.* 可能尚未导出，全部带本地降级） ——
+
+// 阶段列表；契约未就绪时按 steps 顺序两两分组降级（名称/预算为占位，预算条自动隐藏）
+function getPhaseList() {
+  try {
+    const p = stateApi.PHASES;
+    if (Array.isArray(p) && p.length && p.every(ph => Array.isArray(ph.steps))) return p;
+  } catch (e) { /* 契约未就绪 */ }
+  const fallback = [];
+  for (let i = 0; i < steps.length; i += 2) {
+    fallback.push({
+      id: fallback.length + 1,
+      key: 'group' + (fallback.length + 1),
+      name: `阶段 ${fallback.length + 1}`,
+      en: '',
+      icon: '🏗️',
+      steps: steps.slice(i, i + 2).map(s => s.key),
+      budget_t: 0,
+      brief: ''
+    });
+  }
+  return fallback;
+}
+
+function getPhaseById(phaseId) {
+  return getPhaseList().find(p => p.id === phaseId) || null;
+}
+
+function phaseOfStep(stepKey) {
+  try {
+    const p = stateApi.getPhaseForStep?.(stepKey);
+    if (typeof p === 'number') return p;
+    if (p && typeof p.id === 'number') return p.id;
+  } catch (e) { /* 降级 */ }
+  return getPhaseByIdFromKey(stepKey)?.id ?? null;
+}
+
+function getPhaseByIdFromKey(stepKey) {
+  return getPhaseList().find(ph => ph.steps.includes(stepKey)) || null;
+}
+
+// 当前阶段：第一个存在未完成步骤的阶段；全部完成返回最后一阶段
+function currentPhaseId(decisions) {
+  try {
+    const p = stateApi.getCurrentPhase?.(decisions);
+    if (typeof p === 'number' && isFinite(p)) return p;
+  } catch (e) { /* 降级 */ }
+  const list = getPhaseList();
+  for (const ph of list) {
+    if (ph.steps.some(k => !decisions?.[k])) return ph.id;
+  }
+  return list.length ? list[list.length - 1].id : 1;
+}
+
+function phaseComplete(decisions, phaseId) {
+  try {
+    const r = stateApi.isPhaseComplete?.(decisions, phaseId);
+    if (typeof r === 'boolean') return r;
+  } catch (e) { /* 降级 */ }
+  const ph = getPhaseById(phaseId);
+  return ph ? ph.steps.every(k => !!decisions?.[k]) : false;
+}
+
+function phaseProgress(decisions, phaseId) {
+  try {
+    const r = stateApi.getPhaseProgress?.(decisions, phaseId);
+    if (r && typeof r.done === 'number' && typeof r.total === 'number') return r;
+  } catch (e) { /* 降级 */ }
+  const ph = getPhaseById(phaseId);
+  if (!ph) return { done: 0, total: 0 };
+  return { done: ph.steps.filter(k => !!decisions?.[k]).length, total: ph.steps.length };
+}
+
+// 本阶段已选决策的发射质量合计（吨，整数）
+function phaseMass(siteId, decisions, phaseId) {
+  try {
+    const m = stateApi.computePhaseMass?.(siteId, decisions, phaseId);
+    if (typeof m === 'number' && isFinite(m)) return Math.round(m);
+  } catch (e) { /* 降级 */ }
+  const ph = getPhaseById(phaseId);
+  if (!ph) return 0;
+  let sum = 0;
+  ph.steps.forEach(k => {
+    const rule = decisions?.[k] ? safeRule(k, decisions[k], siteId) : null;
+    if (rule && typeof rule.mass_t === 'number') sum += rule.mass_t;
+  });
+  return Math.round(sum);
+}
+
+// { used_t, budget_t, over_t, usage }；无法确定阶段时返回 null
+function phaseBudgetStatus(siteId, decisions, phaseId) {
+  try {
+    const r = stateApi.getPhaseBudgetStatus?.(siteId, decisions, phaseId);
+    if (r && typeof r.used_t === 'number' && typeof r.budget_t === 'number') {
+      return {
+        used_t: Math.round(r.used_t),
+        budget_t: r.budget_t,
+        over_t: typeof r.over_t === 'number' ? r.over_t : Math.max(0, Math.round(r.used_t) - r.budget_t),
+        usage: typeof r.usage === 'number' ? r.usage : (r.budget_t > 0 ? r.used_t / r.budget_t : 0)
+      };
+    }
+  } catch (e) { /* 降级 */ }
+  const ph = getPhaseById(phaseId);
+  if (!ph || !siteId) return null;
+  const used = phaseMass(siteId, decisions, phaseId);
+  const budget = ph.budget_t || 0;
+  return { used_t: used, budget_t: budget, over_t: Math.max(0, used - budget), usage: budget > 0 ? used / budget : 0 };
 }
 
 // 后端 / moon-render 只认旧扁平形状：{ site, energy..transport, crew, metrics, history }
@@ -334,6 +450,9 @@ function cleanup() {
   currentNetwork = null;
   prevNetworkScore = 0;
   networkDashOffset = 0;
+  prevPhaseId = null;
+  prevPhaseSiteId = null;
+  phaseCeremony = null;
   if (assemblyEl) { assemblyEl.remove(); assemblyEl = null; }
   if (networkEl) { networkEl.remove(); networkEl = null; }
   stageInner = null;
@@ -653,33 +772,59 @@ function renderTopBarStats(state) {
   };
 }
 
-// —— Progress Pipeline ——
+// —— Progress Pipeline（三阶段分组） ——
 
 function renderProgressPipeline(state) {
   if (!progressPipeline) return;
   const decisions = getActiveDecisions(state);
+  const phases = getPhaseList();
+  const curPhaseId = currentPhaseId(decisions);
 
   let html = '';
-  steps.forEach((step, i) => {
-    const { isDone, isActive } = getStepStatus(decisions, step, i);
+  phases.forEach((phase, pi) => {
+    const prog = phaseProgress(decisions, phase.id);
+    const isDone = phaseComplete(decisions, phase.id);
+    const isLocked = phase.id > curPhaseId;
+    const groupClass = isDone ? 'done' : isLocked ? 'locked' : 'current';
 
-    let statusClass = 'locked';
-    if (isDone) statusClass = 'done';
-    else if (isActive) statusClass = 'active';
+    html += `<div class="ps-phase-group ${groupClass}" data-phase="${phase.id}">
+      <div class="ps-phase-head" title="${phase.en || phase.name}">
+        <span class="ps-phase-icon">${phase.icon}</span>
+        <span class="ps-phase-name">${phase.name}</span>
+        <span class="ps-phase-count">${prog.done}/${prog.total}</span>
+        ${isDone ? '<span class="ps-phase-state">✓</span>' : isLocked ? '<span class="ps-phase-state">🔒</span>' : ''}
+      </div>
+      <div class="ps-phase-steps">`;
 
-    const icon = STEP_ICONS[step.key] || '●';
-    const label = STEP_SHORT[step.key] || step.name;
+    phase.steps.forEach((stepKey, si) => {
+      const stepIndex = steps.findIndex(s => s.key === stepKey);
+      const step = steps[stepIndex];
+      if (!step) return;
+      const { isDone: stepDone, isActive } = getStepStatus(decisions, step, stepIndex);
 
-    html += `<div class="pipeline-node ${statusClass}" data-step="${step.key}">
-      <div class="pipeline-dot">${isDone ? '✓' : icon}</div>
-      <span class="pipeline-label">${label}</span>
-    </div>`;
+      let statusClass = 'locked';
+      if (stepDone) statusClass = 'done';
+      else if (isActive) statusClass = 'active';
 
-    if (i < steps.length - 1) {
-      let connClass = '';
-      if (isDone) connClass = 'done';
-      else if (isActive) connClass = 'active-half';
-      html += `<div class="pipeline-connector ${connClass}"></div>`;
+      const icon = STEP_ICONS[step.key] || '●';
+      const label = STEP_SHORT[step.key] || step.name;
+
+      html += `<div class="pipeline-node ${statusClass}" data-step="${step.key}">
+        <div class="pipeline-dot">${stepDone ? '✓' : icon}</div>
+        <span class="pipeline-label">${label}</span>
+      </div>`;
+
+      if (si < phase.steps.length - 1) {
+        let connClass = '';
+        if (stepDone) connClass = 'done';
+        else if (isActive) connClass = 'active-half';
+        html += `<div class="pipeline-connector ${connClass}"></div>`;
+      }
+    });
+
+    html += `</div></div>`;
+    if (pi < phases.length - 1) {
+      html += `<div class="ps-phase-divider ${isDone ? 'done' : ''}" aria-hidden="true">›</div>`;
     }
   });
 
@@ -1055,6 +1200,9 @@ function renderStage(state) {
 
   if (!state.activeSite) {
     currentCardSiteId = null;
+    prevPhaseId = null;
+    prevPhaseSiteId = null;
+    phaseCeremony = null;
     renderNoSite();
     return;
   }
@@ -1062,12 +1210,43 @@ function renderStage(state) {
   // 切换基地后强制重建决策卡（规格标签 / 后果预览都按新基地取值）
   const siteChanged = currentCardSiteId !== state.activeSite;
   currentCardSiteId = state.activeSite;
+  if (siteChanged) phaseCeremony = null; // 切基地不打断新基地的流程，也不触发过场
 
   const decisions = getActiveDecisions(state);
   const activeIndex = getActiveStepIndex(decisions);
+  const nowPhaseId = currentPhaseId(decisions);
+
+  // 阶段跳变检测：同一基地、阶段严格前进、且仍有下一阶段 → 插「阶段完成」过场卡
+  // 回退修改不会使阶段倒退（setDecision 只改选项不清空），resetGame / 切基地由上方分支重置
+  const phaseJumped =
+    !siteChanged &&
+    prevPhaseSiteId === state.activeSite &&
+    prevPhaseId != null &&
+    nowPhaseId > prevPhaseId &&
+    activeIndex !== -1;
+
+  prevPhaseId = nowPhaseId;
+  prevPhaseSiteId = state.activeSite;
 
   if (activeIndex === -1) {
+    phaseCeremony = null;
     switchToCard('__complete__', () => buildCompletionCard(getState()));
+    return;
+  }
+
+  // 过场卡展示中：下一步骤未变化时保持仪式（乘员/任务指令等无关渲染不打断）
+  if (phaseCeremony && currentCardStepKey === phaseCeremony.key) {
+    const nextStep = steps[activeIndex];
+    if (nextStep && nextStep.key === phaseCeremony.nextStepKey) return;
+    phaseCeremony = null; // 状态已偏离（回退/跳转），交还常规渲染
+  }
+
+  if (phaseJumped) {
+    const donePhaseId = nowPhaseId - 1; // 刚完成的阶段（单次决策至多推进一阶段）
+    const nextStep = steps[activeIndex];
+    phaseCeremony = { key: `__phase_${donePhaseId}__`, nextStepKey: nextStep.key };
+    fxSound('complete');
+    switchToCard(phaseCeremony.key, () => buildPhaseCard(donePhaseId, getState()), 1);
     return;
   }
 
@@ -1081,6 +1260,105 @@ function renderStage(state) {
     : -1;
   const direction = siteChanged ? 0 : (currentIndex < activeIndex ? 1 : -1);
   switchToCard(desiredCardKey, () => buildActiveCard(activeStep), direction);
+}
+
+// —— 阶段完成过场卡（战役进程仪式感） ——
+
+function buildPhaseCard(phaseId, state) {
+  const phase = getPhaseById(phaseId);
+  const nextPhase = getPhaseById(phaseId + 1);
+  const decisions = getActiveDecisions(state);
+  const siteId = state.activeSite;
+
+  const status = siteId ? phaseBudgetStatus(siteId, decisions, phaseId) : null;
+  const used = status ? status.used_t : (siteId ? phaseMass(siteId, decisions, phaseId) : 0);
+  const budget = status ? status.budget_t : (phase?.budget_t ?? 0);
+  const over = status ? status.over_t : Math.max(0, used - budget);
+  const usagePct = budget > 0 ? Math.min(100, Math.round((used / budget) * 100)) : (used > 0 ? 100 : 0);
+
+  const summaryRows = (phase?.steps || []).map(stepKey => {
+    const step = steps.find(s => s.key === stepKey);
+    const choice = options[stepKey]?.find(o => o.id === decisions[stepKey]);
+    return `<div class="ps-phase-summary-row">
+      <span class="ps-phase-summary-icon">${choice?.icon || STEP_ICONS[stepKey] || '●'}</span>
+      <span class="ps-phase-summary-step">${STEP_SHORT[stepKey] || step?.name || stepKey}</span>
+      <span class="ps-phase-summary-choice">${choice?.label || '—'}</span>
+    </div>`;
+  }).join('');
+
+  const nextFirstStep = nextPhase ? steps.find(s => s.key === nextPhase.steps[0]) : null;
+
+  const card = document.createElement('div');
+  card.className = 'decision-card decision-card-single ps-phase-card active';
+  card.innerHTML = `
+    <div class="ps-phase-hero">${phase?.icon || '🏁'}</div>
+    <h2 class="ps-phase-title">阶段 ${phase?.id ?? phaseId} · ${phase?.name || ''} 完成</h2>
+    <div class="ps-phase-en">${phase?.en || ''}</div>
+    <div class="ps-phase-summary">${summaryRows}</div>
+    ${budget > 0 ? `
+    <div class="ps-budget ps-phase-budget ${over > 0 ? 'over' : ''}">
+      <div class="ps-budget-head"><span>本阶段发射质量</span><span>${used} / ${budget} t${over > 0 ? ` · 超 ${over} t` : ''}</span></div>
+      <div class="ps-budget-track"><div class="ps-budget-fill" style="width:${usagePct}%"></div></div>
+      ${over > 0 ? `<small class="ps-phase-budget-warn">⚠ 本阶段质量超出预算 ${over} t，后续阶段需要压缩载荷。</small>` : ''}
+    </div>` : ''}
+    ${nextPhase ? `
+    <div class="ps-phase-next">
+      <span class="ps-phase-next-icon">${nextPhase.icon}</span>
+      <div class="ps-phase-next-text">
+        <strong>下一阶段 · ${nextPhase.name}</strong>
+        <small>${nextPhase.brief || ''}</small>
+      </div>
+    </div>` : ''}
+    <div class="ps-phase-metrics" hidden></div>
+    <div class="ps-phase-actions">
+      ${nextFirstStep ? `<button class="btn btn-primary" data-phase-next>进入 ${nextPhase.name} →</button>` : ''}
+      <button class="btn btn-ghost" data-phase-metrics>先看看指标</button>
+    </div>
+  `;
+
+  const nextBtn = card.querySelector('[data-phase-next]');
+  if (nextBtn && nextFirstStep) {
+    nextBtn.addEventListener('click', () => {
+      if (isAnimating || commitLock) return;
+      fxSound('confirm');
+      goToStep(nextFirstStep.key, 1);
+    });
+  }
+
+  // 次要路径：停留在过场卡，就地展开当前指标小结（再点收起）
+  const metricsBtn = card.querySelector('[data-phase-metrics]');
+  const metricsBox = card.querySelector('.ps-phase-metrics');
+  if (metricsBtn && metricsBox) {
+    metricsBtn.addEventListener('click', () => {
+      if (metricsBox.hidden) {
+        metricsBox.innerHTML = buildPhaseMetricsHtml(getState());
+        metricsBox.hidden = false;
+        metricsBtn.textContent = '收起指标';
+        fxSound('hover');
+      } else {
+        metricsBox.hidden = true;
+        metricsBtn.textContent = '先看看指标';
+        fxSound('select');
+      }
+    });
+  }
+
+  return card;
+}
+
+// 过场卡内联指标小结（当前基地核心指标一览）
+function buildPhaseMetricsHtml(state) {
+  const m = safeComputeMetrics(state);
+  if (!m) return '<div class="ps-phase-metrics-empty">指标暂不可用</div>';
+  const items = [
+    ['可行性', `${m.viabilityScore}/100`],
+    ['能源结余', `${m.powerSurplus_kW > 0 ? '+' : ''}${m.powerSurplus_kW} kW`],
+    ['供水', `${m.waterSupply_t_y} t/年`],
+    ['辐射', `${m.radiation_mSv_y} mSv`],
+    ['总质量', `${m.totalMass_t} / ${m.launchBudget_t} t`]
+  ];
+  return `<div class="ps-phase-metrics-grid">${items.map(([k, v]) =>
+    `<div class="ps-phase-metric"><small>${k}</small><b>${v}</b></div>`).join('')}</div>`;
 }
 
 function renderNoSite() {
@@ -1145,15 +1423,28 @@ function buildActiveCard(step) {
   const isLast = stepIndex === steps.length - 1;
   const activeSiteId = getState().activeSite;
 
+  // 阶段上下文：步骤号改为「阶段 N · 阶段名 · 步骤 X/6」，卡片顶部展示本阶段发射预算用量
+  const phaseId = phaseOfStep(step.key);
+  const phase = phaseId != null ? getPhaseById(phaseId) : null;
+  const decisionsNow = getActiveDecisions(getState());
+  const budgetStatus = activeSiteId && phaseId != null ? phaseBudgetStatus(activeSiteId, decisionsNow, phaseId) : null;
+  const phaseLabel = phase ? `阶段 ${phase.id} · ${phase.name} · ` : '';
+  const budgetHtml = budgetStatus && budgetStatus.budget_t > 0 ? `
+    <div class="ps-budget ps-phase-budget ${budgetStatus.over_t > 0 ? 'over' : ''}">
+      <div class="ps-budget-head"><span>${phase.icon} ${phase.name} · 阶段发射预算</span><span>${budgetStatus.used_t} / ${budgetStatus.budget_t} t${budgetStatus.over_t > 0 ? ` · 超 ${budgetStatus.over_t} t` : ''}</span></div>
+      <div class="ps-budget-track"><div class="ps-budget-fill" style="width:${Math.min(100, Math.round(budgetStatus.usage * 100))}%"></div></div>
+    </div>` : '';
+
   const card = document.createElement('div');
   card.className = 'decision-card decision-card-single active';
 
   card.innerHTML = `
-    <div class="decision-step-number">步骤 ${stepIndex + 1} / ${steps.length}</div>
+    <div class="decision-step-number">${phaseLabel}步骤 ${stepIndex + 1} / ${steps.length}</div>
     <div class="decision-header">
       <div class="decision-name">${step.name}</div>
     </div>
     <div class="decision-desc">${step.description}</div>
+    ${budgetHtml}
     <div class="option-list" id="options-${step.key}"></div>
     <div class="outcome-preview" id="outcome-preview"><span class="preview-kicker">实时后果预览</span><span>悬停方案，查看它会如何改变当前基地。</span></div>
     <div class="decision-card-actions">
@@ -1242,6 +1533,21 @@ function buildCompletionCard(state) {
   const siteName = metrics?.siteName || siteMeta[state.activeSite]?.name || '';
   const netScore = currentNetwork && typeof currentNetwork.networkScore === 'number' ? currentNetwork.networkScore : null;
 
+  // 三阶段回顾：各阶段质量 vs 阶段预算（超支标红）
+  const decisions = getActiveDecisions(state);
+  const phaseReviewRows = getPhaseList().map(ph => {
+    const st = state.activeSite ? phaseBudgetStatus(state.activeSite, decisions, ph.id) : null;
+    const used = st ? st.used_t : (state.activeSite ? phaseMass(state.activeSite, decisions, ph.id) : 0);
+    const budget = st ? st.budget_t : (ph.budget_t ?? 0);
+    const over = st ? st.over_t : Math.max(0, used - budget);
+    return `<div class="ps-phase-review-row ${over > 0 ? 'over' : ''}">
+      <span class="ps-phase-review-icon">${ph.icon}</span>
+      <span class="ps-phase-review-name">${ph.name}</span>
+      <span class="ps-phase-review-mass">${budget > 0 ? `${used} / ${budget} t${over > 0 ? ` · 超 ${over} t` : ''}` : `${used} t`}</span>
+      <span class="ps-phase-review-check">✓</span>
+    </div>`;
+  }).join('');
+
   // 6 步全部完成、完成卡片首次构建时播放完成音
   if (!completionSoundPlayed) {
     completionSoundPlayed = true;
@@ -1257,6 +1563,10 @@ function buildCompletionCard(state) {
     <div class="completion-mission ${missionPass ? 'passed' : 'missed'}">${missionPass ? '✓' : '△'} ${directive.icon} ${directive.name}：${missionPass ? '任务达成' : '尚未达成'} <small>${directive.target}</small></div>
     ${netScore != null ? `<div class="ps-net-pill">🛰 基地网络评分 <strong data-ps-netscore>${netScore}</strong> / 100 <small>${currentNetwork.bases?.length || 0} 基地联动</small></div>` : ''}
     ${metrics && metrics.budgetOver_t > 0 ? `<div class="ps-budget-warn">⚠ 首年发射质量超出预算 ${metrics.budgetOver_t} t（${metrics.totalMass_t} / ${metrics.launchBudget_t} t），可行性评分已被扣减。</div>` : ''}
+    <div class="ps-phase-review">
+      <div class="ps-block-title">三阶段回顾</div>
+      ${phaseReviewRows}
+    </div>
     ${metrics ? `
     <div class="ps-radar-block">
       <div class="ps-block-title">六维能力雷达</div>
@@ -1550,6 +1860,7 @@ function drawRadar(canvas, metrics) {
 function goToStep(stepKey, direction = 1) {
   const step = steps.find(s => s.key === stepKey);
   if (!step) return;
+  phaseCeremony = null; // 主动跳步即离场过场仪式
   switchToCard(stepKey, () => buildActiveCard(step), direction);
 }
 

@@ -860,3 +860,377 @@ canvas.ps-radar {
     gap: .25rem .6rem;
   }
 }
+
+
+/* ============================================================
+   三阶段建设时间线
+   阶段分组进度管线 / 阶段完成过场卡 / 阶段发射预算条 / 三阶段回顾
+   ============================================================ */
+
+/* ---------- 阶段分组进度管线 ---------- */
+.ps-phase-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  transition: opacity .35s ease, filter .35s ease;
+}
+
+.ps-phase-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .32rem;
+  margin-bottom: .45rem;
+  font-size: .68rem;
+  color: #b9deff;
+  letter-spacing: .08em;
+  white-space: nowrap;
+}
+
+.ps-phase-icon {
+  font-size: .78rem;
+}
+
+.ps-phase-name {
+  font-weight: 600;
+}
+
+.ps-phase-count {
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.ps-phase-state {
+  font-size: .62rem;
+}
+
+.ps-phase-steps {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.ps-phase-steps .pipeline-connector {
+  flex: 0 0 22px;
+}
+
+/* 当前阶段：阶段头冷光点亮 */
+.ps-phase-group.current .ps-phase-head {
+  color: #d9f4ff;
+  text-shadow: 0 0 12px rgba(0, 212, 255, .35);
+}
+
+/* 已完成阶段：整体 ✓ 柔光 */
+.ps-phase-group.done .ps-phase-head {
+  color: var(--success);
+  text-shadow: 0 0 12px rgba(126, 231, 135, .4);
+}
+
+.ps-phase-group.done .ps-phase-state {
+  color: var(--success);
+  text-shadow: 0 0 10px rgba(126, 231, 135, .7);
+}
+
+/* 未解锁阶段：整体降透明度 + 🔒（内部节点不再二次衰减） */
+.ps-phase-group.locked {
+  opacity: .42;
+  filter: grayscale(.55);
+}
+
+.ps-phase-group.locked .pipeline-node.locked {
+  opacity: 1;
+  filter: none;
+}
+
+/* 阶段之间的闸门分隔符 */
+.ps-phase-divider {
+  flex: 0 0 18px;
+  align-self: center;
+  margin-bottom: 1.9rem; /* 对齐节点圆点高度 */
+  text-align: center;
+  color: rgba(140, 202, 255, .35);
+  font-size: .9rem;
+  transition: color .35s ease, text-shadow .35s ease;
+}
+
+.ps-phase-divider.done {
+  color: rgba(126, 231, 135, .65);
+  text-shadow: 0 0 8px rgba(126, 231, 135, .45);
+}
+
+/* ---------- 决策卡内：阶段发射预算条 ---------- */
+.decision-card-single .ps-phase-budget {
+  margin: .15rem 0 1rem;
+  padding: .55rem .75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(101, 183, 255, .14);
+  background: rgba(7, 20, 38, .45);
+  text-align: left;
+}
+
+.ps-phase-budget-warn {
+  display: block;
+  margin-top: .3rem;
+  color: var(--danger);
+  font-size: .66rem;
+}
+
+/* ---------- 阶段完成过场卡 ---------- */
+.ps-phase-card {
+  text-align: center;
+}
+
+.ps-phase-hero {
+  font-size: 3.2rem;
+  line-height: 1.2;
+  margin-bottom: .4rem;
+  filter: drop-shadow(0 0 22px rgba(0, 212, 255, .45));
+  animation: psPhaseHeroIn .7s cubic-bezier(.22, 1.4, .36, 1) both;
+}
+
+@keyframes psPhaseHeroIn {
+  0% { transform: scale(.4) translateY(14px); opacity: 0; }
+  60% { transform: scale(1.12) translateY(-2px); opacity: 1; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+.ps-phase-title {
+  margin: 0 0 .25rem;
+  font-size: 1.35rem;
+  color: var(--lunar-white);
+  text-shadow: 0 0 18px rgba(0, 212, 255, .3);
+}
+
+.ps-phase-en {
+  margin-bottom: 1.1rem;
+  color: var(--muted);
+  font-size: .66rem;
+  letter-spacing: .32em;
+  text-transform: uppercase;
+}
+
+/* 本阶段决策小结 */
+.ps-phase-summary {
+  display: grid;
+  gap: .45rem;
+  margin: 0 auto 1rem;
+  max-width: 26rem;
+}
+
+.ps-phase-summary-row {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .45rem .7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(116, 174, 255, .16);
+  background: linear-gradient(145deg, rgba(17, 29, 48, .6), rgba(9, 10, 14, .55));
+  font-size: .76rem;
+  text-align: left;
+}
+
+.ps-phase-summary-icon {
+  font-size: .95rem;
+}
+
+.ps-phase-summary-step {
+  flex: 0 0 auto;
+  color: #8ccaff;
+  font-size: .68rem;
+  letter-spacing: .1em;
+}
+
+.ps-phase-summary-choice {
+  flex: 1;
+  min-width: 0;
+  color: var(--lunar-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-phase-card .ps-phase-budget {
+  max-width: 26rem;
+  margin: 0 auto 1rem;
+}
+
+/* 下一阶段预告 */
+.ps-phase-next {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  max-width: 26rem;
+  margin: 0 auto 1.2rem;
+  padding: .6rem .8rem;
+  border-radius: 12px;
+  border: 1px dashed rgba(0, 212, 255, .35);
+  background: rgba(0, 212, 255, .05);
+  text-align: left;
+}
+
+.ps-phase-next-icon {
+  font-size: 1.5rem;
+  filter: drop-shadow(0 0 10px rgba(0, 212, 255, .4));
+}
+
+.ps-phase-next-text {
+  display: grid;
+  gap: .15rem;
+}
+
+.ps-phase-next-text strong {
+  color: #d9f4ff;
+  font-size: .82rem;
+}
+
+.ps-phase-next-text small {
+  color: var(--muted);
+  font-size: .68rem;
+  line-height: 1.5;
+}
+
+/* 过场卡内联指标小结 */
+.ps-phase-metrics {
+  max-width: 26rem;
+  margin: 0 auto 1.2rem;
+}
+
+.ps-phase-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: .45rem;
+}
+
+.ps-phase-metric {
+  display: grid;
+  gap: .15rem;
+  padding: .45rem .3rem;
+  border-radius: 9px;
+  border: 1px solid rgba(101, 183, 255, .16);
+  background: rgba(7, 20, 38, .5);
+}
+
+.ps-phase-metric small {
+  color: var(--muted);
+  font-size: .6rem;
+  letter-spacing: .08em;
+}
+
+.ps-phase-metric b {
+  color: #d7edff;
+  font-size: .8rem;
+}
+
+.ps-phase-metrics-empty {
+  color: var(--muted);
+  font-size: .72rem;
+  padding: .5rem;
+}
+
+.ps-phase-actions {
+  display: flex;
+  justify-content: center;
+  gap: .7rem;
+  flex-wrap: wrap;
+}
+
+/* ---------- 完成卡片：三阶段回顾 ---------- */
+.ps-phase-review {
+  display: grid;
+  gap: .45rem;
+  max-width: 26rem;
+  margin: 0 auto 1.25rem;
+  text-align: left;
+}
+
+.ps-phase-review .ps-block-title {
+  margin-top: .2rem;
+  text-align: center;
+}
+
+.ps-phase-review-row {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .45rem .7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(126, 231, 135, .18);
+  background: linear-gradient(145deg, rgba(17, 29, 48, .6), rgba(9, 10, 14, .55));
+  font-size: .76rem;
+}
+
+.ps-phase-review-row.over {
+  border-color: rgba(255, 123, 123, .35);
+}
+
+.ps-phase-review-icon {
+  font-size: .95rem;
+}
+
+.ps-phase-review-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--lunar-white);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ps-phase-review-mass {
+  color: #a6c7ea;
+  font-size: .7rem;
+  white-space: nowrap;
+}
+
+.ps-phase-review-row.over .ps-phase-review-mass {
+  color: var(--danger);
+}
+
+.ps-phase-review-check {
+  color: var(--success);
+  text-shadow: 0 0 8px rgba(126, 231, 135, .6);
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 900px) {
+  .ps-phase-head {
+    font-size: .6rem;
+    gap: .22rem;
+  }
+
+  .ps-phase-count {
+    display: none;
+  }
+
+  .ps-phase-steps .pipeline-connector {
+    flex: 0 0 12px;
+  }
+
+  .ps-phase-divider {
+    flex-basis: 10px;
+    font-size: .7rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .ps-phase-name {
+    display: none; /* 顶栏紧凑模式只保留阶段 icon 与状态标记 */
+  }
+
+  .ps-phase-head {
+    margin-bottom: .3rem;
+  }
+
+  .ps-phase-divider {
+    margin-bottom: 1.1rem;
+  }
+
+  .ps-phase-hero {
+    font-size: 2.6rem;
+  }
+
+  .ps-phase-title {
+    font-size: 1.15rem;
+  }
+}

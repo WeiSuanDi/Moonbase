@@ -10,6 +10,14 @@
   <link rel="stylesheet" href="styles/fx.css">
   <link rel="stylesheet" href="styles/hud.css">
   <link rel="stylesheet" href="styles/plan-systems.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+      "three/": "https://unpkg.com/three@0.128.0/"
+    }
+  }
+  </script>
 </head>
 <body class="page-timeline">
 
@@ -23,6 +31,8 @@
       <li><a href="knowledge.html">月球百科</a></li>
     </ul>
   </nav>
+
+  <section id="tl-progress" class="tl-progress"></section>
 
   <section id="timeline">
     <h2 class="section-title">月球探索<span>时间线</span></h2>
@@ -162,6 +172,7 @@
   <footer>
     <p>© 2026 WEISUANDI · weisuandi.com · 月球基地畅想项目</p>
   </footer>
+  <script type="module" src="scripts/timeline-progress.js" charset="utf-8"></script>
   <script src="scripts/cosmos-ui.js"></script>
   <script src="scripts/fx.js"></script>
   <script src="scripts/navigator.js"></script>
