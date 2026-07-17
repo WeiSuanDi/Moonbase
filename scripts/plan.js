@@ -1,14 +1,20 @@
 import {
-  baseState,
   subscribe,
-  setSite,
+  getState,
+  getSiteDecisions,
+  getPlannedSites,
+  setActiveSite,
+  removeSite,
   setDecision,
   setCrew,
   resetGame,
-  getState,
+  MAX_BASES,
+  getRule,
+  computeMetrics,
+  computeSiteMetrics,
+  computeNetworkMetrics,
   steps,
   options,
-  computeMetrics,
   siteMeta,
   getSiteDifficulty,
   isDecisionComplete,
@@ -23,16 +29,29 @@ let planTopBar, topbarSite, progressPipeline, topbarStats, missionConsole;
 let planStage, completedSummary, decisionCardWrapper;
 let resultPanel, resultTitle, resultBody, resultClose, resultReset;
 let agentFab, agentChat, chatClose, chatMessages, chatInput, chatSend, chatChips;
+let stageInner, assemblyEl, networkEl; // 装配带 / 补给链路面板（init 时注入 stage-inner）
 
 let isGenerating = false;
 let unsubscribe = null;
 let currentCardStepKey = null;
+let currentCardSiteId = null;   // 当前决策卡所属基地（切换基地时强制重建卡片）
 let isAnimating = false;
 let pendingSwitch = null;
+let commitLock = false;         // 选项确认脉冲（250ms）期间的提交锁
 let prevTopbarMetrics = null;   // 上一次渲染的 topbar 数值（countUp 的 from）
 let wasOverBudget = false;      // 预算「内 → 超」跳变检测
 let completionSoundPlayed = false; // 完成音效只在首次构建时播放
 let prevCompletionScore = 0;    // 完成卡片总分的滚动起点
+let prevCompletionNetScore = 0; // 完成卡片网络评分的滚动起点
+let sitePickerOpen = false;     // 「添加基地」选择器展开状态
+let assemblyMemory = { siteId: null, filled: {} }; // 装配带已填入插槽（只对新插槽播动画）
+let currentNetwork = null;      // 最近一次 computeNetworkMetrics 结果
+let prevNetworkScore = 0;       // 补给链路面板网络评分的滚动起点
+let networkRafId = null;        // 补给链路流动虚线 RAF
+let networkDashOffset = 0;      // 流动虚线相位（跨渲染保持连续）
+let networkCanvas = null;
+let networkState = null;
+let networkData = null;
 
 // —— __moonFx 安全包装（worker 可能不存在，全部可选链 + 降级） ——
 function fxSound(name) {
@@ -81,6 +100,96 @@ function setMissionDirective(id) {
   renderMissionConsole(getState());
 }
 
+// —— 常量 ——
+const STEP_ICONS = { energy: '⚡', water: '💧', radiation: '🛡️', communication: '📡', habitat: '🌱', transport: '🚀' };
+const STEP_SHORT = { energy: '能源', water: '水源', radiation: '防护', communication: '通信', habitat: '生命', transport: '运输' };
+const SITE_TONES = {
+  shackleton: '#00d4ff',
+  connecting_ridge: '#00ffaa',
+  cabeus: '#44aaff',
+  marius_lava_tube: '#ff66cc',
+  tranquility: '#e0e0e0',
+  imbrium: '#ffaa55',
+  tycho: '#c9a0ff'
+};
+const LINK_COLORS = { water: '#44aaff', power: '#ffaa55', food: '#7ee787' };
+
+// —— state.js 新契约的安全访问封装（全部按契约导出消费，异常时降级） ——
+
+function getActiveDecisions(state) {
+  try { return getSiteDecisions(state, state?.activeSite) || {}; } catch (e) { return {}; }
+}
+
+function getPlannedList(state) {
+  try { return getPlannedSites(state) || []; } catch (e) { return state?.activeSite ? [state.activeSite] : []; }
+}
+
+function safeComputeMetrics(state) {
+  try { return computeMetrics(state); } catch (e) { return null; }
+}
+
+// 任意基地的指标（契约：computeSiteMetrics(siteId, decisions, crew)）
+function siteMetrics(state, siteId) {
+  try {
+    const decisions = getSiteDecisions(state, siteId) || {};
+    return computeSiteMetrics(siteId, decisions, state.crew);
+  } catch (e) { return null; }
+}
+
+function safeRule(stepKey, choiceId, siteId) {
+  try { return getRule(stepKey, choiceId, siteId); } catch (e) { return null; }
+}
+
+function safeNetworkMetrics(state) {
+  try { return computeNetworkMetrics(state); } catch (e) { return null; }
+}
+
+// 后端 / moon-render 只认旧扁平形状：{ site, energy..transport, crew, metrics, history }
+function buildLegacyState(state) {
+  const d = getActiveDecisions(state);
+  return {
+    site: state?.activeSite ?? null,
+    energy: d.energy ?? null,
+    water: d.water ?? null,
+    radiation: d.radiation ?? null,
+    communication: d.communication ?? null,
+    habitat: d.habitat ?? null,
+    transport: d.transport ?? null,
+    crew: state?.crew,
+    metrics: safeComputeMetrics(state),
+    history: state?.history || []
+  };
+}
+
+// 多基地对比：遍历 getPlannedSites 全部基地，各自组装 legacy payload
+function buildPlannedSiteStates(state) {
+  return getPlannedList(state).map(siteId => {
+    const d = getSiteDecisions(state, siteId) || {};
+    return {
+      site: siteId,
+      energy: d.energy ?? null,
+      water: d.water ?? null,
+      radiation: d.radiation ?? null,
+      communication: d.communication ?? null,
+      habitat: d.habitat ?? null,
+      transport: d.transport ?? null,
+      crew: state.crew,
+      metrics: siteMetrics(state, siteId),
+      history: state.history || []
+    };
+  });
+}
+
+function siteTone(siteId) {
+  const base = bases.find(b => b.id === siteId);
+  if (base && base.tone != null) return '#' + base.tone.toString(16).padStart(6, '0');
+  return SITE_TONES[siteId] || '#8ccaff';
+}
+
+function shortLabel(label) {
+  return String(label || '').split('（')[0];
+}
+
 function queryDom() {
   planTopBar = document.getElementById('plan-top-bar');
   topbarSite = document.getElementById('topbar-site');
@@ -105,6 +214,27 @@ function queryDom() {
   chatInput = document.getElementById('chat-input');
   chatSend = document.getElementById('chat-send');
   chatChips = document.getElementById('chat-chips');
+}
+
+// 在 stage-inner 注入「补给链路」与「基地装配带」容器（plan.html 不可改，DOM 变更全部在这里做）
+// 幂等：先查已有节点，避免 cleanup → init 重入时重复插入
+function ensureStagePanels() {
+  stageInner = planStage ? planStage.querySelector('.stage-inner') : null;
+  if (!stageInner || !decisionCardWrapper) return;
+  assemblyEl = stageInner.querySelector('.ps-assembly');
+  if (!assemblyEl) {
+    assemblyEl = document.createElement('div');
+    assemblyEl.className = 'ps-assembly';
+    assemblyEl.style.display = 'none';
+    stageInner.insertBefore(assemblyEl, decisionCardWrapper);
+  }
+  networkEl = stageInner.querySelector('.ps-network');
+  if (!networkEl) {
+    networkEl = document.createElement('div');
+    networkEl.className = 'ps-network';
+    networkEl.style.display = 'none';
+    stageInner.insertBefore(networkEl, assemblyEl);
+  }
 }
 
 // —— 事件处理（具名函数，便于绑定和解绑） ——
@@ -174,26 +304,39 @@ function unbindEvents() {
 function init() {
   ensureSystemsCss();
   queryDom();
+  ensureStagePanels();
   resolveSiteFromUrl();
   bindEvents();
   unsubscribe = subscribe(render);
   const state = getState();
   render(state);
-  if (state.site) {
-    if (highlightSite) highlightSite(state.site);
-    if (updateDecisionOverlays) updateDecisionOverlays(state);
+  if (state.activeSite) {
+    if (highlightSite) highlightSite(state.activeSite);
+    if (updateDecisionOverlays) updateDecisionOverlays(buildLegacyState(state));
   }
 }
 
 function cleanup() {
   unbindEvents();
+  stopNetworkLoop();
   if (unsubscribe) {
     unsubscribe();
     unsubscribe = null;
   }
   isGenerating = false;
   currentCardStepKey = null;
+  currentCardSiteId = null;
   isAnimating = false;
+  pendingSwitch = null;
+  commitLock = false;
+  sitePickerOpen = false;
+  assemblyMemory = { siteId: null, filled: {} };
+  currentNetwork = null;
+  prevNetworkScore = 0;
+  networkDashOffset = 0;
+  if (assemblyEl) { assemblyEl.remove(); assemblyEl = null; }
+  if (networkEl) { networkEl.remove(); networkEl = null; }
+  stageInner = null;
 }
 
 // 注册页面生命周期（由 navigator.js 通过 window.__pageModules 调用）
@@ -204,55 +347,65 @@ function resolveSiteFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const siteFromUrl = params.get('site');
   if (siteFromUrl && siteMeta[siteFromUrl]) {
-    setSite(siteFromUrl);
+    setActiveSite(siteFromUrl);
   }
 }
 
-function getActiveStepIndex(state) {
-  if (!state.site) return -1;
-  return steps.findIndex(s => !state[s.key]);
+function getActiveStepIndex(decisions) {
+  return steps.findIndex(s => !decisions[s.key]);
 }
 
-function getStepStatus(state, step, index) {
+function getStepStatus(decisions, step, index) {
   const prev = steps[index - 1];
-  const isUnlocked = !prev || state[prev.key];
-  const isDone = !!state[step.key];
+  const isUnlocked = !prev || !!decisions[prev.key];
+  const isDone = !!decisions[step.key];
   const isActive = isUnlocked && !isDone;
   return { isUnlocked, isDone, isActive };
 }
 
 function render(state) {
+  currentNetwork = safeNetworkMetrics(state);
   renderTopBar(state);
   renderMissionConsole(state);
+  renderAssembly(state);
+  renderNetworkPanel(state);
   renderStage(state);
-  if (updateDecisionOverlays) updateDecisionOverlays(state);
+  if (updateDecisionOverlays) updateDecisionOverlays(buildLegacyState(state));
+  if (highlightSite) highlightSite(state.activeSite || null);
   checkBudgetTransition(state);
-  if (!(state.site && isDecisionComplete(state))) {
+  const decisions = getActiveDecisions(state);
+  if (!(state.activeSite && isDecisionComplete(decisions))) {
     completionSoundPlayed = false;
     prevCompletionScore = 0;
+    prevCompletionNetScore = 0;
   }
 }
 
 // 首次从预算内变为超预算时播放错误音
 function checkBudgetTransition(state) {
-  const metrics = computeMetrics(state);
+  const metrics = state.activeSite ? safeComputeMetrics(state) : null;
   const over = !!(metrics && metrics.budgetOver_t > 0);
   if (over && !wasOverBudget) fxSound('error');
   wasOverBudget = over;
 }
 
+// —— Mission Console（含基地网络行 + 添加基地选择器） ——
+
 function renderMissionConsole(state) {
   if (!missionConsole) return;
   const activeId = getMissionDirective();
   const active = missionDirectives[activeId];
-  const metrics = computeMetrics(state);
-  const completed = getCompletedSteps(state);
+  const hasSite = !!state.activeSite;
+  const metrics = hasSite ? safeComputeMetrics(state) : null;
+  const decisions = getActiveDecisions(state);
+  const completed = getCompletedSteps(decisions);
   const isPassing = metrics && active.test(metrics);
-  const alert = completed < 2 ? null : buildMissionAlert(state, metrics);
+  const alert = (hasSite && completed >= 2) ? buildMissionAlert(decisions, metrics) : null;
   const crew = CREW_OPTIONS.includes(state.crew) ? state.crew : 12;
 
   missionConsole.innerHTML = `
     <div class="mission-console-inner">
+      ${buildBaseNetworkRow(state)}
       <div class="mission-console-title"><span class="signal-dot"></span><span>MISSION CONTROL</span><small>选择本轮推演的首要任务</small></div>
       <div class="mission-directives">
         ${Object.entries(missionDirectives).map(([id, item]) => `
@@ -260,9 +413,9 @@ function renderMissionConsole(state) {
             <span>${item.icon}</span><strong>${item.name}</strong><em>${item.target}</em>
           </button>`).join('')}
       </div>
-      <div class="mission-status ${state.site ? (isPassing ? 'on-track' : 'at-risk') : ''}">
-        <span>${state.site ? (isPassing ? '● 任务指标已达成' : '◌ 任务指标待校准') : '◌ 选择基地后启动任务'}</span>
-        <small>${state.site ? `${completed} / ${steps.length} 系统已部署 · ${active.brief}` : '三种指令会给出不同的成功判定。'}</small>
+      <div class="mission-status ${hasSite ? (isPassing ? 'on-track' : 'at-risk') : ''}">
+        <span>${hasSite ? (isPassing ? '● 任务指标已达成' : '◌ 任务指标待校准') : '◌ 选择基地后启动任务'}</span>
+        <small>${hasSite ? `${completed} / ${steps.length} 系统已部署 · ${active.brief}` : '三种指令会给出不同的成功判定。'}</small>
       </div>
       ${alert ? `<div class="mission-alert"><span>⚠ ${alert.title}</span><small>${alert.detail}</small></div>` : ''}
       <div class="ps-console-row">
@@ -279,16 +432,131 @@ function renderMissionConsole(state) {
           <div class="ps-budget-track"><div class="ps-budget-fill" style="width:${Math.min(100, Math.round(metrics.budgetUsage * 100))}%"></div></div>
         </div>` : ''}
       </div>
+      ${sitePickerOpen ? buildSitePicker(state) : ''}
     </div>`;
 
   missionConsole.querySelectorAll('[data-directive]').forEach(btn => btn.addEventListener('click', () => setMissionDirective(btn.dataset.directive)));
   missionConsole.querySelectorAll('[data-crew]').forEach(btn => btn.addEventListener('click', () => setCrew(Number(btn.dataset.crew))));
+
+  // 基地网络行：切换 / 移除 / 添加
+  missionConsole.querySelectorAll('.ps-base-chip[data-site]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const siteId = chip.dataset.site;
+      if (!siteId || siteId === getState().activeSite) return;
+      fxSound('select');
+      setActiveSite(siteId);
+    });
+  });
+  missionConsole.querySelectorAll('[data-remove]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const siteId = el.dataset.remove;
+      if (!siteId) return;
+      const stateNow = getState();
+      let hasDecisions = false;
+      try {
+        const d = getSiteDecisions(stateNow, siteId) || {};
+        hasDecisions = steps.some(s => !!d[s.key]);
+      } catch (err) { hasDecisions = false; }
+      const name = siteMeta[siteId]?.name || siteId;
+      if (hasDecisions && !window.confirm(`移除基地「${name}」？该基地的全部决策将丢失。`)) return;
+      fxSound('select');
+      removeSite(siteId);
+    });
+  });
+  const addBtn = missionConsole.querySelector('[data-add-base]');
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      sitePickerOpen = !sitePickerOpen;
+      fxSound('select');
+      renderMissionConsole(getState());
+    });
+  }
+  const pickerClose = missionConsole.querySelector('[data-picker-close]');
+  if (pickerClose) {
+    pickerClose.addEventListener('click', () => {
+      sitePickerOpen = false;
+      renderMissionConsole(getState());
+    });
+  }
+  missionConsole.querySelectorAll('[data-pick-site]').forEach(card => {
+    card.addEventListener('click', () => {
+      const siteId = card.dataset.pickSite;
+      if (!siteId) return;
+      sitePickerOpen = false;
+      fxSound('confirm');
+      setActiveSite(siteId); // 契约：自动创建空条目并设为当前基地
+    });
+    fxTilt(card, { max: 3 });
+  });
 }
 
-function buildMissionAlert(state, metrics) {
-  if (state.energy === 'solar' && metrics.powerSurplus_kW < 20) return { title: '月夜储能窗口偏窄', detail: '当前能源方案缺少冗余；后续交通与生命维持会继续占用功率。' };
-  if (state.water === 'earth_supply') return { title: '补给线压力上升', detail: '当前水源依赖地球运输，建议用生命维持方案提高闭环能力。' };
-  if (state.radiation === 'hull') return { title: '银河宇宙线暴露偏高', detail: '加厚舱壁能快速部署，但长驻任务仍需要额外屏蔽策略。' };
+// 基地网络行：每个已规划基地一个 chip + 末尾「+ 添加基地」
+function buildBaseNetworkRow(state) {
+  const planned = getPlannedList(state);
+  const chips = planned.map(siteId => {
+    const meta = siteMeta[siteId];
+    let d = {};
+    try { d = getSiteDecisions(state, siteId) || {}; } catch (e) { d = {}; }
+    const doneCount = getCompletedSteps(d);
+    const m = siteMetrics(state, siteId);
+    const isActive = siteId === state.activeSite;
+    const dots = steps.map(s => `<i class="ps-base-dot ${d[s.key] ? 'on' : ''}"></i>`).join('');
+    const score = doneCount > 0 && m ? m.viabilityScore : '—';
+    return `
+      <button class="ps-base-chip ${isActive ? 'active' : ''}" data-site="${siteId}" style="--tone:${siteTone(siteId)}" title="${meta?.name || siteId} · ${doneCount}/${steps.length} 系统已部署">
+        <span class="ps-base-chip-name">${meta?.name || siteId}</span>
+        <span class="ps-base-dots">${dots}</span>
+        <span class="ps-base-score">${score}</span>
+        <span class="ps-base-remove" data-remove="${siteId}" title="移除该基地">×</span>
+      </button>`;
+  }).join('');
+
+  const full = planned.length >= MAX_BASES;
+  const addChip = full
+    ? `<button class="ps-base-chip ps-add-chip disabled" disabled title="最多同时规划 ${MAX_BASES} 个基地，移除一个后再添加">已达上限 ${planned.length}/${MAX_BASES}</button>`
+    : `<button class="ps-base-chip ps-add-chip ${sitePickerOpen ? 'open' : ''}" data-add-base title="添加一个基地（最多 ${MAX_BASES} 个）">＋ 添加基地</button>`;
+
+  return `<div class="ps-bases-row">
+    <span class="ps-bases-label">基地网络</span>
+    <div class="ps-bases-chips">${chips}${addChip}</div>
+  </div>`;
+}
+
+// 添加基地选择器：尚未规划的 siteMeta 基地卡片列表
+function buildSitePicker(state) {
+  const planned = getPlannedList(state);
+  const available = Object.keys(siteMeta).filter(id => !planned.includes(id));
+  if (!available.length) {
+    return `<div class="ps-site-picker"><div class="ps-picker-empty">全部选址都已加入基地网络。</div></div>`;
+  }
+  return `<div class="ps-site-picker">
+    <div class="ps-picker-head">
+      <span>选择新基地选址</span>
+      <small>加入后立即切换为该基地进行推演</small>
+      <button class="ps-picker-close" data-picker-close title="收起">×</button>
+    </div>
+    <div class="ps-picker-grid">
+      ${available.map(id => {
+        const meta = siteMeta[id];
+        const tags = (meta.tags || []).slice(0, 3).map(t => `<span class="ps-picker-tag">${t}</span>`).join('');
+        const diff = meta.difficulty || 2;
+        return `<button class="ps-picker-card" data-pick-site="${id}" style="--tone:${siteTone(id)}">
+          <span class="ps-picker-name">${meta.name}</span>
+          <span class="ps-picker-sub">${meta.subtitle || ''}</span>
+          <span class="ps-picker-tags">${tags}</span>
+          <span class="ps-picker-diff diff-${diff}">难度 · ${getSiteDifficulty(id)}</span>
+        </button>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function buildMissionAlert(decisions, metrics) {
+  if (!metrics) return null;
+  if (decisions.energy === 'solar' && metrics.powerSurplus_kW < 20) return { title: '月夜储能窗口偏窄', detail: '当前能源方案缺少冗余；后续交通与生命维持会继续占用功率。' };
+  if (decisions.water === 'earth_supply') return { title: '补给线压力上升', detail: '当前水源依赖地球运输，建议用生命维持方案提高闭环能力。' };
+  if (decisions.radiation === 'hull') return { title: '银河宇宙线暴露偏高', detail: '加厚舱壁能快速部署，但长驻任务仍需要额外屏蔽策略。' };
   return { title: '系统耦合开始生效', detail: '每项新决策都会重新平衡基地的能源、质量与长期自持能力。' };
 }
 
@@ -302,13 +570,13 @@ function renderTopBar(state) {
 
 function renderTopBarSite(state) {
   if (!topbarSite) return;
-  if (!state.site) {
+  if (!state.activeSite) {
     topbarSite.innerHTML = `<div class="topbar-site-placeholder">尚未选择基地</div>`;
     return;
   }
 
-  const base = bases.find(b => b.id === state.site);
-  const meta = siteMeta[state.site];
+  const base = bases.find(b => b.id === state.activeSite);
+  const meta = siteMeta[state.activeSite];
   if (!base) return;
 
   const iceDisplay = meta?.iceAvailable_t >= 1000000
@@ -333,8 +601,8 @@ function renderTopBarSite(state) {
 
 function renderTopBarStats(state) {
   if (!topbarStats) return;
-  const metrics = computeMetrics(state);
-  if (!metrics || !state.site) {
+  const metrics = state.activeSite ? safeComputeMetrics(state) : null;
+  if (!metrics || !state.activeSite) {
     topbarStats.innerHTML = `<div class="topbar-stats-placeholder">选择基地后开始推演</div>`;
     prevTopbarMetrics = null;
     return;
@@ -389,20 +657,18 @@ function renderTopBarStats(state) {
 
 function renderProgressPipeline(state) {
   if (!progressPipeline) return;
-  const hasSite = !!state.site;
-  const stepIcons = { energy: '⚡', water: '💧', radiation: '🛡️', communication: '📡', habitat: '🌱', transport: '🚀' };
-  const stepLabels = { energy: '能源', water: '水源', radiation: '防护', communication: '通信', habitat: '生命', transport: '运输' };
+  const decisions = getActiveDecisions(state);
 
   let html = '';
   steps.forEach((step, i) => {
-    const { isDone, isActive } = getStepStatus(state, step, i);
+    const { isDone, isActive } = getStepStatus(decisions, step, i);
 
     let statusClass = 'locked';
     if (isDone) statusClass = 'done';
     else if (isActive) statusClass = 'active';
 
-    const icon = stepIcons[step.key] || '●';
-    const label = stepLabels[step.key] || step.name;
+    const icon = STEP_ICONS[step.key] || '●';
+    const label = STEP_SHORT[step.key] || step.name;
 
     html += `<div class="pipeline-node ${statusClass}" data-step="${step.key}">
       <div class="pipeline-dot">${isDone ? '✓' : icon}</div>
@@ -422,14 +688,361 @@ function renderProgressPipeline(state) {
   progressPipeline.querySelectorAll('.pipeline-node').forEach(node => {
     node.addEventListener('click', () => {
       const stepKey = node.dataset.step;
-      if (!stepKey || isAnimating) return;
+      if (!stepKey || isAnimating || commitLock) return;
       const currentState = getState();
+      const currentDecisions = getActiveDecisions(currentState);
       const stepIndex = steps.findIndex(s => s.key === stepKey);
       const prev = steps[stepIndex - 1];
-      const isUnlocked = !!currentState.site && (!prev || !!currentState[prev.key]);
+      const isUnlocked = !!currentState.activeSite && (!prev || !!currentDecisions[prev.key]);
       if (!isUnlocked) return;
-      goToStep(stepKey, stepIndex < getActiveStepIndex(currentState) ? 1 : -1);
+      goToStep(stepKey, stepIndex < getActiveStepIndex(currentDecisions) ? 1 : -1);
     });
+  });
+}
+
+// —— 基地装配带（建造模式）：6 插槽 + 降落部署动画 ——
+
+function glyph(inner) {
+  return `<svg class="ps-glyph" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+}
+
+// 18 个选项的专属小图形（stroke 简笔，必须两两可区分）
+const OPTION_GLYPHS = {
+  // 能源
+  nuclear: glyph('<path d="M8 27a12 12 0 0 1 24 0"/><path d="M5 27h30"/><path d="M5 31h30"/><circle cx="20" cy="21" r="1.5"/><path d="M20 19.5V15M20 19.5l4 2.3M20 19.5l-4 2.3"/>'),
+  storage: glyph('<rect x="5" y="16" width="15" height="12" rx="2"/><path d="M20 20h3v4h-3"/><path d="M9 20v4M12.5 20v4M16 20v4"/><circle cx="28.5" cy="22" r="3"/><circle cx="33.5" cy="22" r="3"/>'),
+  solar: glyph('<circle cx="30" cy="9" r="3.2"/><path d="M30 3.5v1.8M30 12.7v1.8M24.5 9h1.8M33.7 9h1.8M26.2 5.2l1.3 1.3M33.8 5.2l-1.3 1.3"/><path d="M5 19l12-3.5V31L5 34.5Z"/><path d="M19 15l12 2.5v13L19 29Z"/><path d="M11 17.2v15.8M25 16.4v13.6"/>'),
+  // 水源
+  isru: glyph('<path d="M10 5v17M6 5h8"/><path d="M10 22l-3.5 6h7Z"/><path d="M4 28h22"/><path d="M30 12v14M23 19h14M25 14.5l10 9M35 14.5l-10 9"/>'),
+  earth_supply: glyph('<path d="M12 7c4 0 6.5 3.5 6.5 7.5L16.8 21H7.2L5.5 14.5C5.5 10.5 8 7 12 7Z"/><circle cx="12" cy="13.5" r="1.7"/><path d="M7.5 21l-2 4M16.5 21l2 4M12 21v5"/><path d="M29 13c2.6 3.2 4.2 5.4 4.2 7.4a4.2 4.2 0 1 1-8.4 0c0-2 1.6-4.2 4.2-7.4Z"/>'),
+  recycling: glyph('<path d="M28.5 13a9 9 0 1 0 1.8 6.5"/><path d="M31 7v6h-6"/><path d="M20 16.5c2 2.5 3.2 4.2 3.2 5.8a3.2 3.2 0 1 1-6.4 0c0-1.6 1.2-3.3 3.2-5.8Z"/>'),
+  // 防护
+  regolith: glyph('<path d="M5 30a15 11 0 0 1 30 0"/><path d="M3 30h34"/><path d="M13 30a7 6 0 0 1 14 0"/><path d="M9.5 24h21"/><path d="M12 18l2 2.2M28 18l-2 2.2M20 15v3"/>'),
+  cave: glyph('<path d="M4 11h32"/><path d="M13 11l2 4 2-4M24 11l2 3 2-3"/><path d="M10 31v-6a10 8 0 0 1 20 0v6"/><path d="M8 31h24"/><circle cx="20" cy="27" r="1.8"/>'),
+  hull: glyph('<path d="M20 5l12 4v9c0 8-5 12.5-12 16-7-3.5-12-8-12-16V9Z"/><path d="M20 10.5l7 2.4v6c0 4.7-3 7.6-7 9.7-4-2.1-7-5-7-9.7v-6Z"/>'),
+  // 通信
+  laser: glyph('<path d="M7 25a10 10 0 0 1 13-9"/><path d="M13.5 30l4-6.5"/><path d="M9 30h10"/><path d="M19.5 17.5L33 8M22 20.5L35.5 11.5M17 14.5L30.5 5.5"/>'),
+  relay: glyph('<rect x="16" y="15" width="8" height="8" rx="1"/><path d="M16 19H9"/><rect x="4" y="16" width="5" height="6" rx="1"/><path d="M24 19h7"/><rect x="31" y="16" width="5" height="6" rx="1"/><path d="M5 31a19 8 0 0 1 30 0"/>'),
+  direct: glyph('<path d="M20 33V16"/><path d="M15 33h10"/><circle cx="20" cy="14" r="2"/><path d="M14.5 9.5a8 8 0 0 1 11 0M11 5.5a13.5 13.5 0 0 1 18 0"/>'),
+  // 生命
+  closed_farm: glyph('<path d="M7 28a13 13 0 0 1 26 0"/><path d="M5 28h30"/><path d="M20 28v-6"/><path d="M20 22c-3.2 0-5.2-2.2-5.2-5.2 3.2 0 5.2 2.2 5.2 5.2Z"/><path d="M20 22c3.2 0 5.2-2.2 5.2-5.2-3.2 0-5.2 2.2-5.2 5.2Z"/><path d="M12.5 20a7.5 7.5 0 0 1 4-5.5"/>'),
+  earth_food: glyph('<rect x="6" y="14" width="16" height="14" rx="2"/><path d="M6 20h16M14 14v6"/><circle cx="30" cy="24" r="4"/><path d="M30 20c0-2.2 1.6-3.4 3.2-3.6"/>'),
+  algae: glyph('<path d="M14 6h12"/><path d="M17 6v20a3 3 0 0 0 6 0V6"/><path d="M17 17h6"/><circle cx="19.2" cy="23" r="1.2"/><circle cx="21.3" cy="26.5" r="1.5"/><circle cx="19.8" cy="30" r="1"/><path d="M28.5 13c1.8 0 3 1.2 3 3M31.5 9c2.4 0 4 1.6 4 4"/>'),
+  // 运输
+  hopper: glyph('<path d="M16 9h8l2.5 8h-13Z"/><path d="M14.5 17L10 25M25.5 17L30 25M20 17v6"/><path d="M17 25c0 3 1.2 4.5 3 6 1.8-1.5 3-3 3-6"/><path d="M5 31c2.5-1.6 5-1.6 7.5 0M27.5 31c2.5-1.6 5-1.6 7.5 0"/>'),
+  mass_driver: glyph('<path d="M4 29h25M4 32.5h25"/><rect x="8" y="24" width="8" height="5" rx="1"/><path d="M27 25a15 15 0 0 1 8-9"/><circle cx="35.5" cy="15" r="1.5"/>'),
+  cable: glyph('<path d="M4 9l32 6"/><path d="M20 12.4V20"/><rect x="15" y="20" width="10" height="8" rx="2"/><path d="M15 24h10"/><path d="M6 33h28"/>')
+};
+
+function renderAssembly(state) {
+  if (!assemblyEl) return;
+  const siteId = state.activeSite;
+  if (!siteId) {
+    assemblyEl.style.display = 'none';
+    assemblyEl.innerHTML = '';
+    assemblyMemory = { siteId: null, filled: {} };
+    return;
+  }
+  assemblyEl.style.display = '';
+  const decisions = getActiveDecisions(state);
+  const meta = siteMeta[siteId];
+
+  // 切换基地：按该基地 decisions 重渲染，不播降落动画
+  const siteChanged = assemblyMemory.siteId !== siteId;
+  if (siteChanged) assemblyMemory = { siteId, filled: {} };
+
+  const filledNow = {};
+  let deployedNew = false;
+
+  const slotsHtml = steps.map(step => {
+    const choiceId = decisions[step.key] || null;
+    const prevChoice = assemblyMemory.filled[step.key] || null;
+    if (choiceId) filledNow[step.key] = choiceId;
+    const isNewDeploy = !siteChanged && !!choiceId && prevChoice !== choiceId;
+    if (isNewDeploy) deployedNew = true;
+
+    if (!choiceId) {
+      return `<div class="ps-slot empty" data-step="${step.key}" title="${step.name} · 待部署">
+        <span class="ps-slot-visual"><span class="ps-slot-sysicon">${STEP_ICONS[step.key] || '●'}</span></span>
+        <span class="ps-slot-label">${STEP_SHORT[step.key] || step.name}</span>
+      </div>`;
+    }
+
+    const opt = options[step.key]?.find(o => o.id === choiceId);
+    const label = shortLabel(opt?.label || choiceId);
+    return `<div class="ps-slot filled ${isNewDeploy ? 'deploy' : ''}" data-step="${step.key}" title="${step.name} · ${opt?.label || choiceId}">
+      ${isNewDeploy ? '<span class="ps-slot-ring"></span>' : ''}
+      <span class="ps-slot-visual">${OPTION_GLYPHS[choiceId] || `<span class="ps-slot-sysicon">${opt?.icon || '●'}</span>`}</span>
+      <span class="ps-slot-label">${label}</span>
+    </div>`;
+  }).join('');
+
+  assemblyEl.innerHTML = `
+    <div class="ps-assembly-head">
+      <span class="ps-assembly-title">基地装配带</span>
+      <small>${meta?.name || siteId} · ${getCompletedSteps(decisions)}/${steps.length} 系统已部署 · 点击插槽可跳转</small>
+    </div>
+    <div class="ps-assembly-slots">${slotsHtml}</div>`;
+
+  assemblyMemory = { siteId, filled: filledNow };
+  if (deployedNew) fxSound('confirm');
+
+  // 插槽点击跳转对应步骤（沿用已完成 chip 的方向约定）
+  assemblyEl.querySelectorAll('.ps-slot').forEach(slot => {
+    slot.addEventListener('click', () => {
+      if (isAnimating || commitLock) return;
+      const stepKey = slot.dataset.step;
+      const stateNow = getState();
+      if (!stateNow.activeSite) return;
+      const decisionsNow = getActiveDecisions(stateNow);
+      const stepIndex = steps.findIndex(s => s.key === stepKey);
+      if (stepIndex < 0) return;
+      const prev = steps[stepIndex - 1];
+      if (prev && !decisionsNow[prev.key]) { fxSound('error'); return; }
+      const activeIndex = getActiveStepIndex(decisionsNow);
+      if (activeIndex === stepIndex) return;
+      fxSound('select');
+      goToStep(stepKey, stepIndex < activeIndex ? 1 : -1);
+    });
+  });
+}
+
+// —— 补给链路网络图（2D canvas，等距圆柱投影 + 流动虚线） ——
+
+function stopNetworkLoop() {
+  if (networkRafId != null) {
+    cancelAnimationFrame(networkRafId);
+    networkRafId = null;
+  }
+  networkCanvas = null;
+  networkState = null;
+  networkData = null;
+}
+
+function startNetworkLoop(canvas, state, net) {
+  stopNetworkLoop();
+  if (!canvas) return;
+  networkCanvas = canvas;
+  networkState = state;
+  networkData = net;
+  const tick = () => {
+    networkRafId = null;
+    if (!networkCanvas || !networkCanvas.isConnected) { stopNetworkLoop(); return; }
+    drawNetwork(networkCanvas, networkState, networkData);
+    networkDashOffset = (networkDashOffset + 0.5) % 100000;
+    networkRafId = requestAnimationFrame(tick);
+  };
+  networkRafId = requestAnimationFrame(tick);
+}
+
+function linkLabel(link) {
+  const amt = link.amount ?? 0;
+  if (link.resource === 'water') return `+${amt}t水`;
+  if (link.resource === 'power') return `+${amt}kW`;
+  if (link.resource === 'food') return `+${amt}%食物`;
+  return `+${amt}${link.unit || ''}`;
+}
+
+function renderNetworkPanel(state) {
+  if (!networkEl) return;
+  const planned = getPlannedList(state);
+  if (planned.length < 2) {
+    networkEl.style.display = 'none';
+    networkEl.innerHTML = '';
+    stopNetworkLoop();
+    return;
+  }
+  networkEl.style.display = '';
+  const net = currentNetwork;
+  const sharing = !!net?.sharingEnabled;
+  const score = net && typeof net.networkScore === 'number' ? net.networkScore : null;
+  const baseCount = net?.bases?.length || planned.length;
+
+  networkEl.innerHTML = `
+    <div class="ps-net-head">
+      <span class="ps-net-title">补给链路</span>
+      <small>${baseCount} 个基地 · ${sharing ? '链路已建立' : '链路待建立'}</small>
+    </div>
+    <div class="ps-net-body">
+      <canvas class="ps-net-canvas"></canvas>
+      <div class="ps-net-side">
+        <div class="ps-net-score">
+          <span class="ps-net-score-value" data-net-score>${score == null ? '—' : score}</span>
+          <span class="ps-net-score-label">网络评分</span>
+        </div>
+        <div class="ps-net-share">
+          <div class="ps-net-share-row"><i class="ps-net-swatch water"></i>水共享<b>+${net?.waterShared_t ?? 0} t/年</b></div>
+          <div class="ps-net-share-row"><i class="ps-net-swatch power"></i>电共享<b>+${net?.powerShared_kW ?? 0} kW</b></div>
+          <div class="ps-net-share-row"><i class="ps-net-swatch food"></i>食物共享<b>+${Math.round((net?.foodShared_ratio ?? 0) * 100)}%</b></div>
+        </div>
+        ${!sharing ? `<div class="ps-net-offhint">${net ? '运输能力不足，链路未建立' : '网络数据暂不可用'}</div>` : ''}
+      </div>
+    </div>`;
+
+  const scoreEl = networkEl.querySelector('[data-net-score]');
+  if (score != null && scoreEl) {
+    countUpOrSet(scoreEl, score, { from: prevNetworkScore, duration: 700, format: v => String(Math.round(v)) });
+    prevNetworkScore = score;
+  }
+
+  startNetworkLoop(networkEl.querySelector('.ps-net-canvas'), state, net);
+}
+
+function drawNetwork(canvas, state, net) {
+  const planned = getPlannedList(state);
+  if (planned.length < 2) return;
+
+  const cssW = canvas.clientWidth || 480;
+  const cssH = canvas.clientHeight || 230;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(cssW * dpr));
+  const h = Math.max(1, Math.round(cssH * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  // 等距圆柱投影：x = lon 映射，y = lat 映射（按已规划基地自适应取景）
+  const metas = planned.map(id => siteMeta[id]).filter(m => m && typeof m.lon === 'number' && typeof m.lat === 'number');
+  if (metas.length < 2) return;
+  let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
+  metas.forEach(m => {
+    minLon = Math.min(minLon, m.lon); maxLon = Math.max(maxLon, m.lon);
+    minLat = Math.min(minLat, m.lat); maxLat = Math.max(maxLat, m.lat);
+  });
+  const lonSpan = Math.max(maxLon - minLon, 40); // 最小跨度，避免极点集群过度放大
+  const latSpan = Math.max(maxLat - minLat, 25);
+  const lonC = (minLon + maxLon) / 2;
+  const latC = (minLat + maxLat) / 2;
+  const pad = 42;
+  const project = (lon, lat) => {
+    const x = pad + ((lon - (lonC - lonSpan / 2)) / lonSpan) * (cssW - pad * 2);
+    const y = cssH - (pad + ((lat - (latC - latSpan / 2)) / latSpan) * (cssH - pad * 2));
+    return [x, y];
+  };
+  const pos = {};
+  planned.forEach(id => {
+    const m = siteMeta[id];
+    if (m && typeof m.lon === 'number') pos[id] = project(m.lon, m.lat);
+  });
+
+  // 背景网格
+  ctx.strokeStyle = 'rgba(120, 180, 255, 0.06)';
+  ctx.lineWidth = 1;
+  for (let gx = pad; gx < cssW; gx += 36) {
+    ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, cssH); ctx.stroke();
+  }
+  for (let gy = pad; gy < cssH; gy += 36) {
+    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(cssW, gy); ctx.stroke();
+  }
+
+  // 链路：贝塞尔弧线 + 流动虚线（from → to）
+  const links = net?.links || [];
+  links.forEach((link, i) => {
+    const p0 = pos[link.from];
+    const p1 = pos[link.to];
+    if (!p0 || !p1) return;
+    const color = LINK_COLORS[link.resource] || '#8ccaff';
+    const mx = (p0[0] + p1[0]) / 2;
+    const my = (p0[1] + p1[1]) / 2;
+    const dx = p1[0] - p0[0];
+    const dy = p1[1] - p0[1];
+    const dist = Math.hypot(dx, dy) || 1;
+    const sign = i % 2 === 0 ? -1 : 1;
+    const off = Math.min(46, dist * 0.25) * sign;
+    const cx = mx + (-dy / dist) * off;
+    const cy = my + (dx / dist) * off;
+
+    ctx.beginPath();
+    ctx.moveTo(p0[0], p0[1]);
+    ctx.quadraticCurveTo(cx, cy, p1[0], p1[1]);
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.85;
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([7, 6]);
+    ctx.lineDashOffset = -networkDashOffset;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 6;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+
+    // 方向箭头（指向 to）
+    const tx = p1[0] - cx;
+    const ty = p1[1] - cy;
+    const tl = Math.hypot(tx, ty) || 1;
+    const ux = tx / tl;
+    const uy = ty / tl;
+    const ax = p1[0] - ux * 10;
+    const ay = p1[1] - uy * 10;
+    ctx.beginPath();
+    ctx.moveTo(ax + ux * 6, ay + uy * 6);
+    ctx.lineTo(ax - uy * 3.4, ay + ux * 3.4);
+    ctx.lineTo(ax + uy * 3.4, ay - ux * 3.4);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    // 数量标签（贝塞尔中点，t = 0.5）
+    const lx = (p0[0] + 2 * cx + p1[0]) / 4;
+    const ly = (p0[1] + 2 * cy + p1[1]) / 4;
+    const label = linkLabel(link);
+    ctx.font = '10px "Exo 2", "Noto Sans SC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(6, 14, 24, 0.78)';
+    ctx.fillRect(lx - tw / 2 - 4, ly - 8, tw + 8, 15);
+    ctx.fillStyle = color;
+    ctx.fillText(label, lx, ly);
+  });
+
+  // 节点：颜色 = 基地 tone，完成基地外圈环，当前基地白色虚线环
+  planned.forEach(id => {
+    const p = pos[id];
+    if (!p) return;
+    const color = siteTone(id);
+    const baseInfo = net?.bases?.find(b => b.siteId === id);
+    const isActive = id === state.activeSite;
+
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], 7, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 14;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    if (baseInfo?.completed) {
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 11, 0, Math.PI * 2);
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    if (isActive) {
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 14, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 4]);
+      ctx.lineDashOffset = -networkDashOffset * 0.6;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.font = '11px "Exo 2", "Noto Sans SC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = 'rgba(215, 237, 255, 0.9)';
+    ctx.fillText(baseInfo?.name || siteMeta[id]?.name || id, p[0], p[1] + 16);
   });
 }
 
@@ -440,27 +1053,33 @@ function renderStage(state) {
 
   renderCompletedSummary(state);
 
-  if (!state.site) {
+  if (!state.activeSite) {
+    currentCardSiteId = null;
     renderNoSite();
     return;
   }
 
-  const activeIndex = getActiveStepIndex(state);
+  // 切换基地后强制重建决策卡（规格标签 / 后果预览都按新基地取值）
+  const siteChanged = currentCardSiteId !== state.activeSite;
+  currentCardSiteId = state.activeSite;
+
+  const decisions = getActiveDecisions(state);
+  const activeIndex = getActiveStepIndex(decisions);
 
   if (activeIndex === -1) {
-    switchToCard('__complete__', () => buildCompletionCard(state));
+    switchToCard('__complete__', () => buildCompletionCard(getState()));
     return;
   }
 
   const activeStep = steps[activeIndex];
   const desiredCardKey = activeStep.key;
 
-  if (currentCardStepKey === desiredCardKey) return;
+  if (!siteChanged && currentCardStepKey === desiredCardKey) return;
 
   const currentIndex = currentCardStepKey
     ? steps.findIndex(s => s.key === currentCardStepKey)
     : -1;
-  const direction = currentIndex < activeIndex ? 1 : -1;
+  const direction = siteChanged ? 0 : (currentIndex < activeIndex ? 1 : -1);
   switchToCard(desiredCardKey, () => buildActiveCard(activeStep), direction);
 }
 
@@ -475,7 +1094,7 @@ function buildNoSiteCard() {
   card.innerHTML = `
     <div class="decision-card-placeholder">
       <h2>基地沙盘推演</h2>
-      <p>为选定的月面基地完成 6 项核心决策，即可解锁 AI 深度产出。</p>
+      <p>点击上方控制台的「＋ 添加基地」开始规划，或返回首页从月面选择一个基地。最多可同时规划 ${MAX_BASES} 个基地并建立补给链路。</p>
       <a href="index.html" class="btn btn-primary">返回首页选择基地</a>
     </div>
   `;
@@ -484,9 +1103,14 @@ function buildNoSiteCard() {
 
 function renderCompletedSummary(state) {
   if (!completedSummary) return;
+  if (!state.activeSite) {
+    completedSummary.innerHTML = '';
+    return;
+  }
+  const decisions = getActiveDecisions(state);
   const chips = [];
   steps.forEach((step, index) => {
-    const choiceId = state[step.key];
+    const choiceId = decisions[step.key];
     if (!choiceId) return;
     const choice = options[step.key].find(o => o.id === choiceId);
     if (!choice) return;
@@ -505,10 +1129,10 @@ function renderCompletedSummary(state) {
 
   completedSummary.querySelectorAll('.completed-chip').forEach(chip => {
     chip.addEventListener('click', () => {
-      if (isAnimating) return;
+      if (isAnimating || commitLock) return;
       const stepKey = chip.dataset.step;
       const stepIndex = steps.findIndex(s => s.key === stepKey);
-      const activeIndex = getActiveStepIndex(getState());
+      const activeIndex = getActiveStepIndex(getActiveDecisions(getState()));
       const direction = stepIndex < activeIndex ? 1 : -1;
       goToStep(stepKey, direction);
     });
@@ -519,6 +1143,7 @@ function buildActiveCard(step) {
   const stepIndex = steps.findIndex(s => s.key === step.key);
   const isFirst = stepIndex === 0;
   const isLast = stepIndex === steps.length - 1;
+  const activeSiteId = getState().activeSite;
 
   const card = document.createElement('div');
   card.className = 'decision-card decision-card-single active';
@@ -541,11 +1166,18 @@ function buildActiveCard(step) {
   options[step.key].forEach(opt => {
     const btn = document.createElement('button');
     btn.className = 'option-btn';
-    btn.innerHTML = `<span class="option-title">${opt.icon} ${opt.label}</span><span class="option-hint">${opt.hint}</span>`;
+    btn.innerHTML = `<span class="option-title">${opt.icon} ${opt.label}</span><span class="option-hint">${opt.hint}</span>${buildSpecsLine(step.key, opt.id, activeSiteId)}`;
     btn.addEventListener('click', () => {
-      if (isAnimating) return;
-      setDecision(step.key, opt.id);
-      if (getState()[step.key] === opt.id) fxSound('select');
+      if (isAnimating || commitLock) return;
+      // 决策手感：先 250ms 确认脉冲（边框点亮 + 轻微放大），再提交决策触发卡片切换
+      commitLock = true;
+      card.classList.add('ps-committing');
+      btn.classList.add('ps-pulse');
+      fxSound('select');
+      window.setTimeout(() => {
+        commitLock = false;
+        setDecision(step.key, opt.id); // 契约：写入 activeSite
+      }, 250);
     });
     btn.addEventListener('mouseenter', () => renderOutcomePreview(card, step.key, opt.id));
     btn.addEventListener('focus', () => renderOutcomePreview(card, step.key, opt.id));
@@ -556,7 +1188,7 @@ function buildActiveCard(step) {
   const backBtn = card.querySelector('[data-back]');
   if (backBtn) {
     backBtn.addEventListener('click', () => {
-      if (isAnimating) return;
+      if (isAnimating || commitLock) return;
       const prevStep = steps[stepIndex - 1];
       if (prevStep) goToStep(prevStep.key, 1);
     });
@@ -565,25 +1197,50 @@ function buildActiveCard(step) {
   return card;
 }
 
+// 选项规格标签：本站修正后的 质量 / 功率 / 风险 / 可持续，选择前即可横向对比
+function buildSpecsLine(stepKey, choiceId, siteId) {
+  const rule = siteId ? safeRule(stepKey, choiceId, siteId) : null;
+  if (!rule) return '';
+  const mass = rule.mass_t ?? 0;
+  const power = (rule.powerBalance_kW ?? 0) - (rule.powerConsumption_kW ?? 0);
+  const risk = Math.max(0, Math.min(3, rule.riskScore ?? 0));
+  const sustain = rule.sustainability ?? 0;
+  const dots = '●'.repeat(risk) + '○'.repeat(3 - risk);
+  const sign = v => (v > 0 ? `+${v}` : `${v}`);
+  return `<span class="ps-specs">
+    <span class="ps-spec">质量<b>${sign(mass)}t</b></span>
+    <span class="ps-spec">功率<b class="${power >= 0 ? 'pos' : 'neg'}">${sign(power)}kW</b></span>
+    <span class="ps-spec">风险<b class="ps-risk">${dots}</b></span>
+    <span class="ps-spec">可持续<b>♻×${sustain}</b></span>
+  </span>`;
+}
+
 function renderOutcomePreview(card, stepKey, optionId) {
   const preview = card.querySelector('#outcome-preview');
   if (!preview) return;
-  const now = computeMetrics(getState());
-  const trial = { ...getState(), [stepKey]: optionId };
-  const next = computeMetrics(trial);
-  if (!next) return;
-  const delta = (value, before, unit) => `${value >= 0 ? '+' : ''}${value}${unit}`;
-  const power = next.powerSurplus_kW - (now?.powerSurplus_kW || 0);
-  const water = next.waterSupply_t_y - (now?.waterSupply_t_y || 0);
-  const radiation = next.radiation_mSv_y - (now?.radiation_mSv_y || 0);
-  preview.innerHTML = `<span class="preview-kicker">方案预测 · 未提交</span><div class="preview-metrics"><b>功率 ${delta(power, now?.powerSurplus_kW, ' kW')}</b><b>供水 ${delta(water, now?.waterSupply_t_y, ' t/年')}</b><b>辐射 ${delta(radiation, now?.radiation_mSv_y, ' mSv')}</b></div>`;
+  const state = getState();
+  const siteId = state.activeSite;
+  if (!siteId) return;
+  const decisions = getActiveDecisions(state);
+  const currentId = decisions[stepKey] || null;
+  const nextRule = safeRule(stepKey, optionId, siteId);
+  if (!nextRule) return;
+  const curRule = currentId ? safeRule(stepKey, currentId, siteId) : null;
+  const pw = r => (r?.powerBalance_kW ?? 0) - (r?.powerConsumption_kW ?? 0);
+  const power = Math.round(pw(nextRule) - pw(curRule));
+  const water = Math.round((nextRule.waterSupply_t_y ?? 0) - (curRule?.waterSupply_t_y ?? 0));
+  const radiation = Math.round((nextRule.radiationDelta_mSv_y ?? 0) - (curRule?.radiationDelta_mSv_y ?? 0));
+  const delta = value => `${value >= 0 ? '+' : ''}${value}`;
+  preview.innerHTML = `<span class="preview-kicker">方案预测 · 未提交</span><div class="preview-metrics"><b>功率 ${delta(power)} kW</b><b>供水 ${delta(water)} t/年</b><b>辐射 ${delta(radiation)} mSv</b></div>`;
 }
 
 function buildCompletionCard(state) {
-  const metrics = computeMetrics(state);
+  const metrics = safeComputeMetrics(state);
   const viabilityClass = metrics && metrics.viabilityScore >= 70 ? 'good' : metrics && metrics.viabilityScore >= 45 ? 'warn' : 'bad';
   const directive = missionDirectives[getMissionDirective()];
   const missionPass = metrics && directive.test(metrics);
+  const siteName = metrics?.siteName || siteMeta[state.activeSite]?.name || '';
+  const netScore = currentNetwork && typeof currentNetwork.networkScore === 'number' ? currentNetwork.networkScore : null;
 
   // 6 步全部完成、完成卡片首次构建时播放完成音
   if (!completionSoundPlayed) {
@@ -595,9 +1252,10 @@ function buildCompletionCard(state) {
   card.className = 'decision-card decision-card-single completion-card active';
   card.innerHTML = `
     <div class="completion-icon">🎉</div>
-    <h2 class="completion-title">推演完成</h2>
-    <p class="completion-desc">你已完成全部 6 项核心决策，综合可行性评分为 <strong class="${viabilityClass}" data-ps-score>${metrics?.viabilityScore ?? '—'}/100</strong>。</p>
+    <h2 class="completion-title">推演完成 · ${siteName}</h2>
+    <p class="completion-desc">你已完成该基地全部 6 项核心决策，综合可行性评分为 <strong class="${viabilityClass}" data-ps-score>${metrics?.viabilityScore ?? '—'}/100</strong>。</p>
     <div class="completion-mission ${missionPass ? 'passed' : 'missed'}">${missionPass ? '✓' : '△'} ${directive.icon} ${directive.name}：${missionPass ? '任务达成' : '尚未达成'} <small>${directive.target}</small></div>
+    ${netScore != null ? `<div class="ps-net-pill">🛰 基地网络评分 <strong data-ps-netscore>${netScore}</strong> / 100 <small>${currentNetwork.bases?.length || 0} 基地联动</small></div>` : ''}
     ${metrics && metrics.budgetOver_t > 0 ? `<div class="ps-budget-warn">⚠ 首年发射质量超出预算 ${metrics.budgetOver_t} t（${metrics.totalMass_t} / ${metrics.launchBudget_t} t），可行性评分已被扣减。</div>` : ''}
     ${metrics ? `
     <div class="ps-radar-block">
@@ -630,16 +1288,28 @@ function buildCompletionCard(state) {
     prevCompletionScore = metrics.viabilityScore;
   }
 
+  // 网络评分数字滚动
+  const netScoreEl = card.querySelector('[data-ps-netscore]');
+  if (netScoreEl && netScore != null) {
+    countUpOrSet(netScoreEl, netScore, {
+      from: prevCompletionNetScore,
+      duration: 900,
+      format: v => String(Math.round(v))
+    });
+    prevCompletionNetScore = netScore;
+  }
+
   // 六维雷达图（纯 canvas，无库）
   const radarCanvas = card.querySelector('#ps-radar-canvas');
   if (radarCanvas && metrics) drawRadar(radarCanvas, metrics);
 
-  // 任务事件推演：掷出 2 张不重复事件卡
+  // 任务事件推演：掷出 2 张不重复事件卡（判定用 legacy 扁平状态）
   const rollBtn = card.querySelector('#ps-roll-events');
   const eventList = card.querySelector('#ps-event-list');
   rollBtn?.addEventListener('click', () => {
     fxSound('confirm');
-    renderEventCards(eventList, getState());
+    const stateNow = getState();
+    renderEventCards(eventList, buildLegacyState(stateNow), safeComputeMetrics(stateNow));
   });
 
   card.querySelector('#generate-summary-btn')?.addEventListener('click', onRunAgentSummary);
@@ -764,16 +1434,15 @@ function rollEventCards(state) {
   return picked;
 }
 
-function renderEventCards(listEl, state) {
+function renderEventCards(listEl, legacyState, metrics) {
   if (!listEl) return;
-  const metrics = computeMetrics(state);
   const badges = [
     '<span class="ps-badge ps-ok">✓ 化解</span>',
     '<span class="ps-badge ps-hit">△ 受损</span>',
     '<span class="ps-badge ps-down">✕ 重创</span>'
   ];
-  listEl.innerHTML = rollEventCards(state).map(ev => {
-    const r = ev.judge(state, metrics);
+  listEl.innerHTML = rollEventCards(legacyState).map(ev => {
+    const r = ev.judge(legacyState, metrics);
     return `
       <div class="ps-event-card">
         <div class="ps-event-head"><span class="ps-event-icon">${ev.icon}</span><strong>${ev.name}</strong>${badges[r.tier]}</div>
@@ -955,19 +1624,18 @@ async function runAgentOutput(type) {
   }
 
   const state = getState();
-  const metrics = computeMetrics(state);
+  const metrics = safeComputeMetrics(state);
 
   try {
     let text = '';
     if (type === 'summary') {
-      text = await generateSummary({ ...state, metrics });
+      text = await generateSummary(buildLegacyState(state));
     } else if (type === 'story') {
-      text = await generateStory({ ...state, metrics });
+      text = await generateStory(buildLegacyState(state));
     } else if (type === 'poster') {
-      text = await generatePoster({ ...state, metrics });
+      text = await generatePoster(buildLegacyState(state));
     } else if (type === 'compare') {
-      const states = buildAllSiteStates(state);
-      text = await compareBases(states);
+      text = await compareBases(buildPlannedSiteStates(state));
     }
     showResult(markdownToHtml(text), OUTPUT_TITLES[type] || 'AI 产出');
   } catch (err) {
@@ -975,7 +1643,7 @@ async function runAgentOutput(type) {
     if (type === 'summary') {
       showResult(markdownToHtml(buildLocalSummary(state, metrics)), '基地可行性简报');
     } else if (type === 'compare') {
-      showResult(markdownToHtml(buildLocalCompare(state, metrics)), '多基地对比报告');
+      showResult(markdownToHtml(buildLocalCompare(state)), '多基地对比报告');
     } else {
       showResult(markdownToHtml(`**AI 服务暂不可用**\n\n${err.message}\n\n请稍后重试，或检查 DEEPSEEK_API_KEY 配置。`), '提示');
     }
@@ -988,19 +1656,13 @@ async function runAgentOutput(type) {
   }
 }
 
-function buildAllSiteStates(currentState) {
-  return bases.map(base => {
-    const alt = { ...currentState, site: base.id };
-    return { ...alt, metrics: computeMetrics(alt) };
-  });
-}
-
 async function onSuggestNext() {
   const state = getState();
-  if (!state.site || isDecisionComplete(state)) return;
+  const decisions = getActiveDecisions(state);
+  if (!state.activeSite || isDecisionComplete(decisions)) return;
   appendMessage('agent', '正在分析当前配置并给出建议…');
   try {
-    const text = await suggestNext({ ...state, metrics: computeMetrics(state) });
+    const text = await suggestNext(buildLegacyState(state));
     appendMessage('agent', text);
   } catch (err) {
     appendMessage('agent', `建议失败：${err.message}`);
@@ -1008,12 +1670,14 @@ async function onSuggestNext() {
 }
 
 function buildLocalSummary(state, metrics) {
+  if (!metrics) return '# 基地可行性简报\n\n当前基地指标暂不可用。';
+  const decisions = getActiveDecisions(state);
   const lines = [
     `# ${metrics.siteName}基地可行性简报`,
     ``,
     `## 配置摘要`,
     `- 选址：${metrics.siteName}`,
-    ...steps.map(s => `- ${s.name}：${options[s.key].find(o => o.id === state[s.key])?.label || '未选择'}`),
+    ...steps.map(s => `- ${s.name}：${options[s.key].find(o => o.id === decisions[s.key])?.label || '未选择'}`),
     ``,
     `## 关键指标`,
     `- 综合可行性：${metrics.viabilityScore}/100`,
@@ -1040,16 +1704,27 @@ function buildLocalSummary(state, metrics) {
   return lines.join('\n');
 }
 
-function buildLocalCompare(currentState, currentMetrics) {
+function buildLocalCompare(state) {
+  const planned = getPlannedList(state);
+  const rows = planned
+    .map(siteId => ({ siteId, metrics: siteMetrics(state, siteId) }))
+    .filter(r => r.metrics);
+
+  if (!rows.length) {
+    return '# 多基地对比报告（本地推演）\n\n暂无可对比的基地，请先在控制台添加基地。';
+  }
+
   const lines = [
     '# 多基地对比报告（本地推演）',
     '',
-    '基于你当前六大决策，在不同基地的推演结果如下：',
+    planned.length >= 2
+      ? `基于你已规划的 ${planned.length} 个基地，各自的推演结果如下：`
+      : '目前只规划了 1 个基地，结果如下（在控制台「＋ 添加基地」后可进行横向对比）：',
     ''
   ];
-  buildAllSiteStates(currentState).forEach(st => {
-    const m = st.metrics;
-    lines.push(`## ${m.siteName}`);
+  rows.forEach(({ siteId, metrics: m }) => {
+    const d = getSiteDecisions(state, siteId) || {};
+    lines.push(`## ${m.siteName}（${getCompletedSteps(d)}/${steps.length} 系统已部署）`);
     lines.push(`- 综合可行性：${m.viabilityScore}/100`);
     lines.push(`- 能源结余：${m.powerSurplus_kW > 0 ? '+' : ''}${m.powerSurplus_kW} kW`);
     lines.push(`- 年供水量：${m.waterSupply_t_y} t`);
@@ -1057,7 +1732,7 @@ function buildLocalCompare(currentState, currentMetrics) {
     lines.push(`- 可持续：${m.sustainability}/30`);
     lines.push('');
   });
-  const best = buildAllSiteStates(currentState).sort((a, b) => b.metrics.viabilityScore - a.metrics.viabilityScore)[0];
+  const best = [...rows].sort((a, b) => b.metrics.viabilityScore - a.metrics.viabilityScore)[0];
   lines.push(`## 推荐`);
   lines.push(`综合评分最高的是 **${best.metrics.siteName}**，得分为 ${best.metrics.viabilityScore}/100。接入 AI 后将获得更详细的选址理由与风险分析。`);
   return lines.join('\n');
@@ -1137,8 +1812,7 @@ async function sendChat() {
   if (chatSend) chatSend.disabled = true;
 
   try {
-    const state = getState();
-    const answer = await askAgent({ ...state, metrics: computeMetrics(state) }, text);
+    const answer = await askAgent(buildLegacyState(getState()), text);
     removeTyping();
     appendMessage('agent', answer || '（AI 没有返回内容）');
   } catch (err) {
