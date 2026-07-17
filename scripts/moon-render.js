@@ -122,6 +122,87 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let animFrameId = null;
 
+// —— 交互增强状态（相机俯冲 / 悬停 HUD / 待机视差）——
+let flyAnim = null;          // 进行中的相机俯冲动画
+let hoverBaseId = null;      // 当前悬停的基地 id
+let markerPulse = null;      // 标记点亮脉冲 { baseId, start }
+const parallaxTarget = new THREE.Vector2(0, 0);
+const parallaxCurrent = new THREE.Vector2(0, 0);
+let controlsDragging = false;
+const _parallaxRight = new THREE.Vector3();
+const _parallaxUp = new THREE.Vector3();
+const _parallaxOffset = new THREE.Vector3();
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// 取消进行中的俯冲（不触发 onArrive）
+function cancelFly() {
+  if (flyAnim) {
+    if (flyAnim.rafId) cancelAnimationFrame(flyAnim.rafId);
+    flyAnim = null;
+    if (controls) controls.enabled = true;
+  }
+}
+
+/**
+ * 相机俯冲选址：平滑补间到指定基地标记的近月面位置。
+ * @param {string} siteId bases 数组中的基地 id
+ * @param {{ duration?: number, onArrive?: () => void }} [options]
+ * @returns {boolean} 是否成功启动俯冲
+ */
+export function flyToSite(siteId, { duration = 1100, onArrive } = {}) {
+  if (!camera || !controls) return false;
+  const base = bases.find(b => b.id === siteId);
+  if (!base) return false;
+
+  // 可重复调用：先取消上一段俯冲
+  cancelFly();
+
+  controls.autoRotate = false;
+  controls.enabled = false;
+  // 终点距离月面约 0.6 半径单位，低于默认 minDistance，需先放宽避免阻尼回弹
+  controls.minDistance = Math.min(controls.minDistance, 0.35);
+
+  const markerPos = latLonToVector3(base.lat, base.lon, 1.03);
+  const normal = markerPos.clone().normalize();
+  const endPos = markerPos.clone().add(normal.multiplyScalar(0.6));
+
+  flyAnim = {
+    rafId: null,
+    start: performance.now(),
+    duration,
+    fromPos: camera.position.clone(),
+    toPos: endPos,
+    fromTarget: controls.target.clone(),
+    toTarget: markerPos.clone(),
+    onArrive: typeof onArrive === 'function' ? onArrive : null
+  };
+
+  // 标记光环比点亮脉冲
+  markerPulse = { baseId: siteId, start: performance.now() };
+
+  const step = (now) => {
+    if (!flyAnim || !camera || !controls) return;
+    const t = Math.min(1, (now - flyAnim.start) / flyAnim.duration);
+    const k = easeInOutCubic(t);
+    camera.position.lerpVectors(flyAnim.fromPos, flyAnim.toPos, k);
+    controls.target.lerpVectors(flyAnim.fromTarget, flyAnim.toTarget, k);
+    camera.lookAt(controls.target);
+    if (t >= 1) {
+      const arrive = flyAnim.onArrive;
+      flyAnim = null;
+      if (controls) controls.enabled = true;
+      if (arrive) arrive();
+      return;
+    }
+    flyAnim.rafId = requestAnimationFrame(step);
+  };
+  flyAnim.rafId = requestAnimationFrame(step);
+  return true;
+}
+
 export function initMoon() {
   const container = document.getElementById('canvas-container');
   if (!container) return;
@@ -348,6 +429,60 @@ export function initMoon() {
 
   // Interaction
   const tooltip = document.getElementById('marker-tooltip');
+  // HUD 悬停卡跟随鼠标的惯性坐标（lerp 延迟，不瞬移）
+  let tooltipX = 0, tooltipY = 0, tooltipTX = 0, tooltipTY = 0, tooltipShown = false;
+
+  function buildHudHtml(base) {
+    const illum = Math.max(0, Math.min(100, base.illumination ?? 0));
+    const icePct = Math.max(0, Math.min(100, ((base.iceWt ?? 0) / 6) * 100));
+    const slopePct = Math.max(0, Math.min(100, ((base.slope ?? 0) / 15) * 100));
+    return `
+      <div class="moon-hud__frame">
+        <i class="moon-hud__corner moon-hud__corner--tl"></i>
+        <i class="moon-hud__corner moon-hud__corner--tr"></i>
+        <i class="moon-hud__corner moon-hud__corner--bl"></i>
+        <i class="moon-hud__corner moon-hud__corner--br"></i>
+        <div class="moon-hud__scan"></div>
+        <div class="moon-hud__name">${base.name}</div>
+        <div class="moon-hud__sub">${base.subtitle}</div>
+        <div class="moon-hud__rows">
+          <div class="moon-hud__row">
+            <span class="moon-hud__label">光照</span>
+            <span class="moon-hud__bar"><span class="moon-hud__fill" style="width:${illum}%"></span></span>
+            <span class="moon-hud__value">${base.illumination}%</span>
+          </div>
+          <div class="moon-hud__row">
+            <span class="moon-hud__label">水冰</span>
+            <span class="moon-hud__bar"><span class="moon-hud__fill" style="width:${icePct}%"></span></span>
+            <span class="moon-hud__value">${base.iceWt} wt%</span>
+          </div>
+          <div class="moon-hud__row">
+            <span class="moon-hud__label">坡度</span>
+            <span class="moon-hud__bar"><span class="moon-hud__fill" style="width:${slopePct}%"></span></span>
+            <span class="moon-hud__value">${base.slope}°</span>
+          </div>
+        </div>
+        <div class="moon-hud__hint">点击开始推演 →</div>
+      </div>`;
+  }
+
+  function showTooltip(base) {
+    if (!tooltip) return;
+    if (!tooltipShown) {
+      // 首次出现时对齐目标位置，避免从远处飞入
+      tooltipX = tooltipTX;
+      tooltipY = tooltipTY;
+    }
+    tooltip.innerHTML = buildHudHtml(base);
+    tooltip.className = 'moon-hud moon-hud--visible';
+    tooltipShown = true;
+  }
+
+  function hideTooltip() {
+    if (!tooltip) return;
+    tooltip.classList.remove('moon-hud--visible');
+    tooltipShown = false;
+  }
 
   function onContainerClick(event) {
     const intersects = getIntersects(event.clientX, event.clientY, container);
@@ -361,21 +496,50 @@ export function initMoon() {
   }
 
   function onContainerMouseMove(event) {
+    // 待机视差目标（-1 ~ 1 归一化）
+    const rect = container.getBoundingClientRect();
+    const nx = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const ny = ((event.clientY - rect.top) / rect.height) * 2 - 1;
+    parallaxTarget.set(Math.max(-1, Math.min(1, nx)), Math.max(-1, Math.min(1, ny)));
+
+    tooltipTX = event.clientX;
+    tooltipTY = event.clientY;
+
+    // 俯冲期间隐藏悬停卡并跳过拾取
+    if (flyAnim) {
+      hoverBaseId = null;
+      hideTooltip();
+      container.style.cursor = 'default';
+      return;
+    }
+
     const intersects = getIntersects(event.clientX, event.clientY, container);
     if (intersects.length > 0) {
       const base = intersects[0].object.userData.base;
-      if (tooltip) {
-        tooltip.textContent = base.name;
-        tooltip.style.left = event.clientX + 'px';
-        tooltip.style.top = event.clientY + 'px';
-        tooltip.classList.add('visible');
+      if (base) {
+        if (hoverBaseId !== base.id) {
+          // 进入新标记才发声，同一标记内 mousemove 不重复触发
+          hoverBaseId = base.id;
+          window.__moonFx?.sound('hover');
+          showTooltip(base);
+        }
+        container.style.cursor = 'pointer';
       }
-      container.style.cursor = 'pointer';
     } else {
-      tooltip?.classList.remove('visible');
+      if (hoverBaseId !== null) hoverBaseId = null;
+      hideTooltip();
       container.style.cursor = 'default';
     }
   }
+
+  function onContainerMouseLeave() {
+    parallaxTarget.set(0, 0);
+    hoverBaseId = null;
+    hideTooltip();
+  }
+
+  function onControlsStart() { controlsDragging = true; }
+  function onControlsEnd() { controlsDragging = false; }
 
   function onWindowResize() {
     if (!container || !renderer) return;
@@ -392,6 +556,9 @@ export function initMoon() {
 
   container.addEventListener('click', onContainerClick);
   container.addEventListener('mousemove', onContainerMouseMove);
+  container.addEventListener('mouseleave', onContainerMouseLeave);
+  controls.addEventListener('start', onControlsStart);
+  controls.addEventListener('end', onControlsEnd);
   window.addEventListener('resize', onWindowResize);
 
   // Animation loop
@@ -404,14 +571,56 @@ export function initMoon() {
 
     markerGroup.children.forEach(child => {
       if (child.userData.type === 'ring') {
-        const scale = 1 + Math.sin(t * 3 + child.position.x) * 0.3;
+        const phase = Math.sin(t * 3 + child.position.x);
+        let scale = 1 + phase * 0.3;
+        let opacity = 0.35 - phase * 0.15;
+        const bid = child.userData.base?.id;
+        // 悬停：环放大增亮
+        if (bid && bid === hoverBaseId) {
+          scale *= 1.6;
+          opacity = Math.min(1, opacity + 0.5);
+        }
+        // 俯冲点亮脉冲（约 750ms 正弦包络）
+        if (bid && markerPulse && markerPulse.baseId === bid) {
+          const p = (performance.now() - markerPulse.start) / 750;
+          if (p >= 1) {
+            markerPulse = null;
+          } else {
+            const pulse = Math.sin(p * Math.PI);
+            scale *= 1 + pulse * 1.8;
+            opacity = Math.min(1, opacity + pulse * 0.65);
+          }
+        }
         child.scale.set(scale, scale, scale);
-        child.material.opacity = 0.35 - Math.sin(t * 3 + child.position.x) * 0.15;
+        child.material.opacity = opacity;
       }
     });
 
+    // HUD 悬停卡：跟随鼠标的惯性延迟
+    if (tooltip) {
+      tooltipX += (tooltipTX - tooltipX) * 0.18;
+      tooltipY += (tooltipTY - tooltipY) * 0.18;
+      tooltip.style.left = tooltipX + 'px';
+      tooltip.style.top = tooltipY + 'px';
+    }
+
+    // 待机视差：拖动 / 俯冲期间平滑归零，不影响 OrbitControls 状态
+    const px = (controlsDragging || flyAnim) ? 0 : parallaxTarget.x;
+    const py = (controlsDragging || flyAnim) ? 0 : parallaxTarget.y;
+    parallaxCurrent.x += (px - parallaxCurrent.x) * 0.05;
+    parallaxCurrent.y += (py - parallaxCurrent.y) * 0.05;
+
     glow.position.copy(moon.position);
+
+    // 视差偏移仅在渲染瞬间施加，渲染后还原，避免污染 OrbitControls 的相机状态
+    _parallaxRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    _parallaxUp.setFromMatrixColumn(camera.matrixWorld, 1);
+    _parallaxOffset.set(0, 0, 0)
+      .addScaledVector(_parallaxRight, parallaxCurrent.x * 0.035)
+      .addScaledVector(_parallaxUp, -parallaxCurrent.y * 0.028);
+    camera.position.add(_parallaxOffset);
     composer.render();
+    camera.position.sub(_parallaxOffset);
   }
   animate();
 
@@ -429,11 +638,26 @@ export function initMoon() {
       clearInterval(checkDoneInterval);
       checkDoneInterval = null;
     }
+    // 取消进行中的俯冲动画与交互增强状态
+    cancelFly();
+    markerPulse = null;
+    hoverBaseId = null;
+    controlsDragging = false;
+    parallaxTarget.set(0, 0);
+    parallaxCurrent.set(0, 0);
     container.removeEventListener('click', onContainerClick);
     container.removeEventListener('mousemove', onContainerMouseMove);
+    container.removeEventListener('mouseleave', onContainerMouseLeave);
+    if (controls) {
+      controls.removeEventListener('start', onControlsStart);
+      controls.removeEventListener('end', onControlsEnd);
+    }
     window.removeEventListener('resize', onWindowResize);
     container.style.cursor = 'default';
-    if (tooltip) tooltip.classList.remove('visible');
+    if (tooltip) {
+      tooltip.className = '';
+      tooltip.innerHTML = '';
+    }
     if (loaderEl) {
       loaderEl.classList.remove('hidden');
       loaderEl.style.display = '';

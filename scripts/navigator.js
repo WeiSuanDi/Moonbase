@@ -75,7 +75,7 @@
   }
 
   function isSkippedScript(s) {
-    if (s.src && (s.src.indexOf("navigator.js") !== -1 || s.src.indexOf("music-player.js") !== -1)) {
+    if (s.src && (s.src.indexOf("navigator.js") !== -1 || s.src.indexOf("music-player.js") !== -1 || s.src.indexOf("fx.js") !== -1)) {
       return true;
     }
     return false;
@@ -84,7 +84,7 @@
   function filterAttrs(attrs) {
     return attrs.filter(function (a) {
       if (a.name === "src") {
-        return a.value.indexOf("navigator.js") === -1 && a.value.indexOf("music-player.js") === -1;
+        return a.value.indexOf("navigator.js") === -1 && a.value.indexOf("music-player.js") === -1 && a.value.indexOf("fx.js") === -1;
       }
       return true;
     });
@@ -186,6 +186,16 @@
       var parser = new DOMParser();
       var doc = parser.parseFromString(html, "text/html");
 
+      // 3.5 跃迁「覆盖」动画：fetch 完成后、替换 body 前播放（超时兜底，动画失败也照常导航）
+      try {
+        if (window.__moonFx && typeof window.__moonFx._cover === "function") {
+          await Promise.race([
+            window.__moonFx._cover(),
+            new Promise(function (resolve) { setTimeout(resolve, 900); })
+          ]);
+        }
+      } catch (fxErr) { /* 动画失败静默降级 */ }
+
       // 4. 保存并移除持久元素
       savePersistentElements();
 
@@ -222,8 +232,27 @@
       // 14. 调用新页面的初始化函数（从注册表查找，解决 ES 模块缓存问题）
       var newPage = getPageName(url);
       callInit(newPage);
+
+      // 15. 跃迁「揭示」动画：新页面全息显影，并清理 overlay（失败不影响导航）
+      try {
+        if (window.__moonFx && typeof window.__moonFx._reveal === "function") {
+          window.__moonFx._reveal();
+        }
+      } catch (fxErr) { /* 动画失败静默降级 */ }
+
+      // 16. 广播导航完成，供氛围层（cosmos-ui / fx 质感层）重新挂载
+      try {
+        document.dispatchEvent(new CustomEvent("moon:navigation-complete", {
+          detail: { url: url, page: newPage }
+        }));
+      } catch (evtErr) { /* 忽略 */ }
     } catch (err) {
       console.error("导航失败，使用完整页面跳转：", err);
+      try {
+        if (window.__moonFx && typeof window.__moonFx._reveal === "function") {
+          window.__moonFx._reveal();
+        }
+      } catch (fxErr2) { /* 忽略 */ }
       window.location.href = url;
     } finally {
       isNavigating = false;
@@ -251,7 +280,7 @@
 
   // ——— 暴露 navigateTo 供 JS 调用 ———
   window.__navigate = function (url) {
-    navigateTo(url, true);
+    return navigateTo(url, true);
   };
 
   // 记录初始页面

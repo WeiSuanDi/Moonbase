@@ -1,8 +1,12 @@
 // 单一状态源（single source of truth）
 // v2.5：引入 ReferenceMaterials 真实数据校准选址与规则表
 
-const STORAGE_KEY = 'moonBaseState_v25';
-const LEGACY_KEYS = ['moonBaseState_v2', 'moonBaseState_v1'];
+const STORAGE_KEY = 'moonBaseState_v26';
+const LEGACY_KEYS = ['moonBaseState_v25', 'moonBaseState_v2', 'moonBaseState_v1'];
+
+// ===== 沙盘扩展参数 =====
+export const CREW_OPTIONS = [4, 12, 50, 100]; // 常驻乘员档位
+export const LAUNCH_BUDGET_T = 300; // 首年发射质量预算（吨）
 
 // ===== 决策流程 =====
 export const steps = [
@@ -344,14 +348,24 @@ const defaultState = {
   communication: null,
   habitat: null,
   transport: null,
+  crew: 12,
   history: []
 };
+
+function normalizeState(parsed) {
+  if (!parsed) return null;
+  return {
+    ...defaultState,
+    ...parsed,
+    crew: CREW_OPTIONS.includes(parsed.crew) ? parsed.crew : defaultState.crew,
+    history: parsed.history || []
+  };
+}
 
 function migrateLegacy(raw) {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw);
-    return { ...defaultState, ...parsed, history: parsed.history || [] };
+    return normalizeState(JSON.parse(raw));
   } catch (e) {
     return null;
   }
@@ -361,8 +375,7 @@ function loadFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      return { ...defaultState, ...parsed, history: parsed.history || [] };
+      return normalizeState(JSON.parse(raw));
     }
     for (const key of LEGACY_KEYS) {
       const legacy = localStorage.getItem(key);
@@ -409,6 +422,12 @@ export function setDecision(stepKey, optionId) {
   notify();
 }
 
+export function setCrew(n) {
+  if (!CREW_OPTIONS.includes(n) || baseState.crew === n) return;
+  baseState.crew = n;
+  notify();
+}
+
 export function resetGame() {
   baseState.site = null;
   steps.forEach(s => { baseState[s.key] = null; });
@@ -431,6 +450,7 @@ export function getState() {
     communication: baseState.communication,
     habitat: baseState.habitat,
     transport: baseState.transport,
+    crew: baseState.crew,
     history: [...baseState.history]
   };
 }
@@ -480,22 +500,37 @@ export function computeMetrics(state) {
     if (rule.note) deltas.notes.push(rule.note);
   });
 
-  const powerSurplus_kW = site.basePower_kW + deltas.powerBalance_kW - deltas.powerConsumption_kW;
+  // ===== 乘员需求模型 =====
+  const crew = CREW_OPTIONS.includes(state.crew) ? state.crew : 12;
+  const waterDemand_t_y = crew * 1.2;
+  const powerDemand_kW = crew * 0.8;
+  const waterBalance_t_y = deltas.waterSupply_t_y - waterDemand_t_y;
+  const foodSupportRatio = Math.min(1, deltas.foodSelfSufficiency / (crew * 0.9));
+
+  // 乘员生活用电计入总耗电
+  const powerSurplus_kW = site.basePower_kW + deltas.powerBalance_kW - deltas.powerConsumption_kW - powerDemand_kW;
   const radiation_mSv_y = Math.max(5, site.baseRadiation_mSv_y + (ruleTable.radiation[state.radiation]?.radiationDelta_mSv_y || 0));
+
+  // ===== 发射质量预算 =====
+  const totalMass_t = Math.round(deltas.mass_t);
+  const launchBudget_t = LAUNCH_BUDGET_T;
+  const budgetOver_t = Math.max(0, totalMass_t - launchBudget_t);
+  const budgetUsage = totalMass_t / launchBudget_t;
+  const budgetPenalty = Math.min(12, Math.floor(budgetOver_t / 10) * 2);
 
   // 综合可行性评分（0-100）
   const powerScore = Math.min(25, Math.max(0, (powerSurplus_kW + 30) / 100 * 25));
   const radiationScore = Math.min(20, Math.max(0, (400 - radiation_mSv_y) / 395 * 20));
-  const waterScore = Math.min(20, Math.max(0, deltas.waterSupply_t_y / 1200 * 20));
+  const waterScore = waterBalance_t_y < 0 ? 0 : Math.min(20, 8 + Math.min(1, waterBalance_t_y / 500) * 12);
   const sustainScore = Math.min(20, Math.max(0, deltas.sustainability / 28 * 20));
   const riskPenalty = Math.min(15, Math.max(0, deltas.riskScore / 18 * 15));
-  const viabilityScore = Math.round(powerScore + radiationScore + waterScore + sustainScore - riskPenalty);
+  const viabilityScore = Math.max(0, Math.round(powerScore + radiationScore + waterScore + sustainScore - riskPenalty - budgetPenalty));
 
   return {
     siteName: site.name,
     siteMeta: site,
     powerSurplus_kW: Math.round(powerSurplus_kW),
-    totalMass_t: Math.round(deltas.mass_t),
+    totalMass_t,
     waterSupply_t_y: Math.round(deltas.waterSupply_t_y),
     radiation_mSv_y: Math.round(radiation_mSv_y),
     riskScore: deltas.riskScore,
@@ -505,6 +540,14 @@ export function computeMetrics(state) {
     foodSelfSufficiency: deltas.foodSelfSufficiency,
     transportCapacity: deltas.transportCapacity,
     viabilityScore,
+    crewCount: crew,
+    waterDemand_t_y: Math.round(waterDemand_t_y * 10) / 10,
+    powerDemand_kW: Math.round(powerDemand_kW * 10) / 10,
+    waterBalance_t_y: Math.round(waterBalance_t_y),
+    foodSupportRatio: Math.round(foodSupportRatio * 1000) / 1000,
+    launchBudget_t,
+    budgetOver_t,
+    budgetUsage: Math.round(budgetUsage * 1000) / 1000,
     notes: deltas.notes,
     benchmarks
   };

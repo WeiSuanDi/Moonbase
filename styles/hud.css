@@ -1,0 +1,165 @@
+/* ============================================================
+   HUD 全息悬停卡（首页 3D 月球标记）
+   复用 #marker-tooltip 元素，全部 class 以 .moon-hud 开头，
+   通过 #marker-tooltip.moon-hud 提高特异性以覆盖 main.css。
+   ============================================================ */
+
+#marker-tooltip.moon-hud {
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  white-space: normal;
+  width: 248px;
+  opacity: 0;
+  transform: translate(-50%, calc(-100% - 18px));
+  transition: opacity 0.22s ease;
+  will-change: left, top, opacity;
+}
+
+#marker-tooltip.moon-hud.moon-hud--visible {
+  opacity: 1;
+}
+
+/* —— 全息面板底 —— */
+.moon-hud__frame {
+  position: relative;
+  overflow: hidden;
+  padding: 12px 14px 11px;
+  background:
+    linear-gradient(160deg, rgba(10, 18, 26, 0.88), rgba(6, 10, 16, 0.82));
+  border: 1px solid rgba(96, 214, 255, 0.38);
+  box-shadow:
+    0 0 22px rgba(0, 200, 255, 0.14),
+    inset 0 0 26px rgba(0, 180, 255, 0.06);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: #d9f2ff;
+  font-family: 'Exo 2', 'Noto Sans SC', sans-serif;
+}
+
+/* —— 角框 corner brackets —— */
+.moon-hud__corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 0 solid rgba(0, 220, 255, 0.9);
+  pointer-events: none;
+}
+.moon-hud__corner--tl { top: 0; left: 0; border-top-width: 1.5px; border-left-width: 1.5px; }
+.moon-hud__corner--tr { top: 0; right: 0; border-top-width: 1.5px; border-right-width: 1.5px; }
+.moon-hud__corner--bl { bottom: 0; left: 0; border-bottom-width: 1.5px; border-left-width: 1.5px; }
+.moon-hud__corner--br { bottom: 0; right: 0; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+
+/* —— 细扫描线 —— */
+.moon-hud__scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(120, 225, 255, 0.05) 0px,
+    rgba(120, 225, 255, 0.05) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  mix-blend-mode: screen;
+  animation: moon-hud-scan 6s linear infinite;
+}
+.moon-hud__scan::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 26px;
+  background: linear-gradient(to bottom, transparent, rgba(0, 220, 255, 0.10), transparent);
+  animation: moon-hud-sweep 3.2s ease-in-out infinite;
+}
+@keyframes moon-hud-scan {
+  from { background-position-y: 0; }
+  to { background-position-y: 40px; }
+}
+@keyframes moon-hud-sweep {
+  0% { top: -30%; }
+  100% { top: 110%; }
+}
+
+/* —— 标题区 —— */
+.moon-hud__name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #eaf8ff;
+  text-shadow: 0 0 10px rgba(0, 210, 255, 0.45);
+}
+.moon-hud__sub {
+  margin-top: 2px;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  color: rgba(140, 220, 255, 0.75);
+}
+
+/* —— 迷你数据条 —— */
+.moon-hud__rows {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.moon-hud__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.66rem;
+}
+.moon-hud__label {
+  flex: 0 0 2.2em;
+  color: rgba(170, 225, 250, 0.8);
+  letter-spacing: 0.12em;
+}
+.moon-hud__bar {
+  flex: 1;
+  height: 4px;
+  background: rgba(90, 190, 235, 0.16);
+  border: 1px solid rgba(90, 190, 235, 0.22);
+  overflow: hidden;
+}
+.moon-hud__fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(to right, rgba(0, 180, 255, 0.55), rgba(0, 230, 255, 0.95));
+  box-shadow: 0 0 8px rgba(0, 215, 255, 0.55);
+  transition: width 0.3s ease;
+}
+.moon-hud__value {
+  flex: 0 0 auto;
+  min-width: 3.4em;
+  text-align: right;
+  color: #cfeeff;
+  font-variant-numeric: tabular-nums;
+}
+
+/* —— 底部提示 —— */
+.moon-hud__hint {
+  margin-top: 10px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(96, 214, 255, 0.18);
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  color: rgba(0, 225, 255, 0.85);
+  text-shadow: 0 0 8px rgba(0, 220, 255, 0.4);
+  animation: moon-hud-hint 1.6s ease-in-out infinite;
+}
+@keyframes moon-hud-hint {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
+/* 尊重减少动态偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .moon-hud__scan,
+  .moon-hud__scan::after,
+  .moon-hud__hint {
+    animation: none;
+  }
+}
